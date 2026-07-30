@@ -1,0 +1,133 @@
+:root {
+  --background: #0b1220;
+  --surface: #111a2c;
+  --surface-2: #18243a;
+  --text: #e8edf8;
+  --text-muted: #9faec7;
+  --border: #2a3b59;
+  --green: #35d08f;
+  --red: #ff7d7d;
+  --yellow: #ffd26f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--background);
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+
+.tabs {
+  margin: 1rem 0 1.25rem;
+  display: flex;
+  gap: 0.6rem;
+}
+
+h1 {
+  margin-bottom: 0.35rem;
+  font-size: 1.8rem;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.error {
+  margin: 1rem 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid #7a2a2a;
+  background: #2f1010;
+  color: #ffb8b8;
+}
+
+.controls {
+  margin: 1.25rem 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-width: 420px;
+}
+
+label {
+  font-size: 0.92rem;
+  color: var(--text-muted);
+}
+
+select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.65rem 0.75rem;
+  font-size: 0.95rem;
+}
+
+button {
+  background: #294a84;
+  border: 1px solid #2f5aa3;
+  border-radius: 8px;
+  color: #f3f7ff;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.tab-active {
+  background: #3868b6;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.table-wrap {
+  margin-top: 1rem;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+thead {
+  background: var(--surface-2);
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.row-viable .viability-cell {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.row-not-viable .viability-cell {
+  color: var(--yellow);
+}
+
+.row-invalid .viability-cell {
+  color: var(--red);
+}

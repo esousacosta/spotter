@@ -1,0 +1,394 @@
+import { getCached } from "@/lib/server/cache";
+import type { Ticker } from "@/lib/types";
+
+const S_AND_P_500_PRIMARY_URL =
+  "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv";
+const S_AND_P_500_FALLBACK_URL =
+  "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies";
+const CBOE_OPTIONS_URL = "https://cdn.cboe.com/api/global/delayed_quotes/options";
+const NASDAQ_HISTORICAL_URL = "https://api.nasdaq.com/api/quote";
+const CACHE_TTL_MS = 10 * 60 * 1000;
+
+type CboeOptionRow = {
+  option?: string;
+  iv?: number;
+  open_interest?: number;
+  bid?: number;
+  ask?: number;
+};
+
+type CboeOptionsResponse = {
+  data?: {
+    current_price?: number;
+    prev_day_close?: number;
+    volume?: number | string;
+    options?: CboeOptionRow[];
+  };
+};
+
+export type OptionContract = {
+  strike: number;
+  impliedVolatility: number;
+  openInterest: number;
+  bid: number | null;
+  ask: number | null;
+};
+
+export type OptionSnapshot = {
+  spotPrice: number;
+  expirations: number[];
+  volume: number | null;
+};
+
+export type HistoricalDailyBar = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+type ParsedCboeChain = {
+  spotPrice: number;
+  callsByExpiry: Map<number, OptionContract[]>;
+  putsByExpiry: Map<number, OptionContract[]>;
+  volume: number | null;
+};
+
+async function fetchText(url: string): Promise<string> {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(10_000),
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "application/json, text/plain, */*",
+    },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Market data request failed (${response.status}): ${body.slice(0, 240)}`);
+  }
+
+  return response.text();
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const body = await fetchText(url);
+  return JSON.parse(body) as T;
+}
+
+function parseMarketNumber(value: string | number | null | undefined): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const cleaned = value.replaceAll("$", "").replaceAll(",", "").trim();
+  if (!cleaned) {
+    return null;
+  }
+
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+
+    if (char === '"') {
+      const next = line[i + 1];
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      fields.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  fields.push(current);
+  return fields.map((field) => field.trim());
+}
+
+function parseConstituentCsv(csv: string): Ticker[] {
+  const lines = csv
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const dataLines = lines.slice(1);
+  const rows = dataLines
+    .map((line) => parseCsvLine(line))
+    .filter((columns) => columns.length >= 2)
+    .map((columns) => ({
+      symbol: columns[0].toUpperCase(),
+      name: columns[1],
+    }))
+    .filter((row) => row.symbol.length > 0 && row.name.length > 0);
+
+  if (rows.length === 0) {
+    throw new Error("S&P 500 CSV source returned no valid rows.");
+  }
+
+  return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+function decodeHtml(text: string): string {
+  return text
+    .replaceAll("&amp;", "&")
+    .replaceAll("&#160;", " ")
+    .replaceAll("&nbsp;", " ")
+    .trim();
+}
+
+function parseFallbackWikipediaTable(html: string): Ticker[] {
+  const table = html.match(/<table[^>]*id="constituents"[\s\S]*?<\/table>/i)?.[0];
+  if (!table) {
+    throw new Error("Could not parse S&P 500 table from fallback source.");
+  }
+
+  const rows = [...table.matchAll(/<tr>([\s\S]*?)<\/tr>/gi)]
+    .map((row) => row[1])
+    .map((rowHtml) =>
+      [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((cell) =>
+        decodeHtml(cell[1].replaceAll(/<[^>]+>/g, "")),
+      ),
+    )
+    .filter((cells) => cells.length >= 2)
+    .map((cells) => ({ symbol: cells[0].toUpperCase(), name: cells[1] }))
+    .filter((row) => row.symbol !== "SYMBOL" && row.symbol.length > 0 && row.name.length > 0);
+
+  if (rows.length === 0) {
+    throw new Error("Fallback source returned no valid S&P 500 rows.");
+  }
+
+  return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+function parseOccOptionSymbol(
+  occSymbol: string,
+): { expiryUnix: number; optionType: "C" | "P"; strike: number } | null {
+  const match = occSymbol.match(/^(.+)(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/);
+  if (!match) {
+    return null;
+  }
+
+  const year = 2000 + Number(match[2]);
+  const month = Number(match[3]);
+  const day = Number(match[4]);
+  const optionType = match[5] as "C" | "P";
+  const strike = Number(match[6]) / 1000;
+
+  if (!Number.isFinite(strike) || strike <= 0) {
+    return null;
+  }
+
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  if (!Number.isInteger(day) || day < 1 || day > 31) {
+    return null;
+  }
+
+  const expiryUnix = Math.floor(Date.UTC(year, month - 1, day, 12, 0, 0) / 1000);
+  return { expiryUnix, optionType, strike };
+}
+
+async function loadCboeChain(symbol: string): Promise<ParsedCboeChain> {
+  return getCached(`cboe-chain:${symbol}`, CACHE_TTL_MS, async () => {
+    const payload = await fetchJson<CboeOptionsResponse>(
+      `${CBOE_OPTIONS_URL}/${encodeURIComponent(symbol)}.json`,
+    );
+
+    const data = payload.data;
+    if (!data) {
+      throw new Error(`No option-chain payload returned for ${symbol}.`);
+    }
+
+    const spotPrice = data.current_price ?? data.prev_day_close;
+    if (!spotPrice || !Number.isFinite(spotPrice)) {
+      throw new Error(`No valid spot price returned for ${symbol}.`);
+    }
+
+    const options = data.options ?? [];
+    const callsByExpiry = new Map<number, OptionContract[]>();
+    const putsByExpiry = new Map<number, OptionContract[]>();
+    const volume = parseMarketNumber(data.volume);
+
+    for (const optionRow of options) {
+      const occ = optionRow.option;
+      const iv = optionRow.iv;
+      if (!occ || !iv || !Number.isFinite(iv) || iv <= 0) {
+        continue;
+      }
+
+      const parsed = parseOccOptionSymbol(occ);
+      if (!parsed) {
+        continue;
+      }
+
+      const contract: OptionContract = {
+        strike: parsed.strike,
+        impliedVolatility: iv,
+        openInterest:
+          typeof optionRow.open_interest === "number" && Number.isFinite(optionRow.open_interest)
+            ? optionRow.open_interest
+            : 0,
+        bid: parseMarketNumber(optionRow.bid),
+        ask: parseMarketNumber(optionRow.ask),
+      };
+
+      const targetMap = parsed.optionType === "C" ? callsByExpiry : putsByExpiry;
+      const existing = targetMap.get(parsed.expiryUnix) ?? [];
+      existing.push({
+        ...contract,
+      });
+      targetMap.set(parsed.expiryUnix, existing);
+    }
+
+    if (callsByExpiry.size === 0) {
+      throw new Error(`No call options with implied volatility found for ${symbol}.`);
+    }
+
+    return {
+      spotPrice,
+      callsByExpiry,
+      putsByExpiry,
+      volume,
+    };
+  });
+}
+
+type NasdaqHistoricalResponse = {
+  data?: {
+    tradesTable?: {
+      rows?: Array<{
+        date?: string;
+        open?: string;
+        high?: string;
+        low?: string;
+        close?: string;
+        volume?: string;
+      }>;
+    };
+  } | null;
+};
+
+function parseNasdaqDate(date: string): string | null {
+  const match = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) {
+    return null;
+  }
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  if (!month || !day || !year) {
+    return null;
+  }
+  return `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day
+    .toString()
+    .padStart(2, "0")}`;
+}
+
+async function fetchNasdaqHistoricalBars(symbol: string, limit = 90): Promise<HistoricalDailyBar[]> {
+  const now = new Date();
+  const toDate = now.toISOString().slice(0, 10);
+  const fromDateObj = new Date(now);
+  fromDateObj.setUTCDate(fromDateObj.getUTCDate() - 220);
+  const fromDate = fromDateObj.toISOString().slice(0, 10);
+
+  const payload = await fetchJson<NasdaqHistoricalResponse>(
+    `${NASDAQ_HISTORICAL_URL}/${encodeURIComponent(symbol)}/historical?assetclass=stocks&fromdate=${fromDate}&todate=${toDate}&limit=${limit}`,
+  );
+
+  const rows = payload.data?.tradesTable?.rows ?? [];
+  const bars = rows
+    .map((row) => {
+      const date = row.date ? parseNasdaqDate(row.date) : null;
+      const open = parseMarketNumber(row.open);
+      const high = parseMarketNumber(row.high);
+      const low = parseMarketNumber(row.low);
+      const close = parseMarketNumber(row.close);
+      const volume = parseMarketNumber(row.volume);
+
+      if (!date || open === null || high === null || low === null || close === null || volume === null) {
+        return null;
+      }
+
+      return {
+        date,
+        open,
+        high,
+        low,
+        close,
+        volume,
+      } satisfies HistoricalDailyBar;
+    })
+    .filter((value): value is HistoricalDailyBar => value !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (bars.length === 0) {
+    throw new Error(`No valid historical bars returned for ${symbol}.`);
+  }
+
+  return bars;
+}
+
+export const marketDataProvider = {
+  async getSP500Tickers(): Promise<Ticker[]> {
+    return getCached("sp500-tickers", CACHE_TTL_MS, async () => {
+      try {
+        const csv = await fetchText(S_AND_P_500_PRIMARY_URL);
+        return parseConstituentCsv(csv);
+      } catch {
+        const html = await fetchText(S_AND_P_500_FALLBACK_URL);
+        return parseFallbackWikipediaTable(html);
+      }
+    });
+  },
+
+  async getOptionSnapshot(symbol: string): Promise<OptionSnapshot> {
+    const chain = await loadCboeChain(symbol);
+    const expirations = [...chain.callsByExpiry.keys()].sort((a, b) => a - b);
+    return {
+      spotPrice: chain.spotPrice,
+      expirations,
+      volume: chain.volume,
+    };
+  },
+
+  async getOptionChainCalls(symbol: string, expirationUnix: number): Promise<OptionContract[]> {
+    const chain = await loadCboeChain(symbol);
+    return chain.callsByExpiry.get(expirationUnix) ?? [];
+  },
+
+  async getOptionChainPuts(symbol: string, expirationUnix: number): Promise<OptionContract[]> {
+    const chain = await loadCboeChain(symbol);
+    return chain.putsByExpiry.get(expirationUnix) ?? [];
+  },
+
+  async getHistoricalDailyBars(symbol: string, limit = 90): Promise<HistoricalDailyBar[]> {
+    return getCached(`nasdaq-hist:${symbol}:${limit}`, CACHE_TTL_MS, async () =>
+      fetchNasdaqHistoricalBars(symbol, limit),
+    );
+  },
+};
