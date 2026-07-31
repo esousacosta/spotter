@@ -7,6 +7,7 @@ import {
   parseMonthCode,
   isMonthInRange,
 } from "./ibkr-market-data-provider";
+import { generateOptionMonths } from "./ibkr-client";
 
 describe("expiryDateToUnix", () => {
   it("converts YYYYMMDD to Unix timestamp at noon UTC", () => {
@@ -163,5 +164,28 @@ describe("isMonthInRange", () => {
     const start = Date.UTC(2025, 6, 1); // Jul 1 2025
     const end = Date.UTC(2025, 7, 31); // Aug 31 2025
     expect(isMonthInRange("SEP25", start, end)).toBe(false);
+  });
+});
+
+describe("generateOptionMonths", () => {
+  it("generates month codes covering the full window", () => {
+    const start = Date.UTC(2026, 6, 31); // Jul 31 2026
+    const end = Date.UTC(2026, 9, 29);   // Oct 29 2026 (~90 days)
+    const months = generateOptionMonths(start, end);
+    expect(months).toEqual(["JUL26", "AUG26", "SEP26", "OCT26"]);
+  });
+
+  it("includes the start month even if start is mid-month", () => {
+    const start = Date.UTC(2026, 7, 15); // Aug 15 2026
+    const end = Date.UTC(2026, 8, 1);    // Sep 1 2026
+    const months = generateOptionMonths(start, end);
+    expect(months).toContain("AUG26");
+    expect(months).toContain("SEP26");
+  });
+
+  it("returns a single month when start and end are in the same month", () => {
+    const start = Date.UTC(2026, 7, 1);  // Aug 1 2026
+    const end = Date.UTC(2026, 7, 20);   // Aug 20 2026
+    expect(generateOptionMonths(start, end)).toEqual(["AUG26"]);
   });
 });

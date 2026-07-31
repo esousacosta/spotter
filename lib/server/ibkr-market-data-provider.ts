@@ -120,11 +120,10 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
       throw new Error(`No valid spot price from IBKR for ${symbol}.`);
     }
 
-    // Available months in the next 90 days
+    // Available months in the next 90 days — generated locally, no API call needed.
     const now = Date.now();
     const end = now + 90 * 24 * 60 * 60 * 1_000;
-    const allMonths = await ibkrClient.getOptionMonths(underlyingConid);
-    const relevantMonths = allMonths.filter((m) => isMonthInRange(m, now, end));
+    const relevantMonths = ibkrClient.generateOptionMonths(now, end);
     if (relevantMonths.length === 0) {
       throw new Error(`No option months within 90 days found for ${symbol}.`);
     }
@@ -134,7 +133,13 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
     const putEntries: ibkrClient.OptionContractEntry[] = [];
 
     for (const month of relevantMonths) {
-      const strikesData = await ibkrClient.getStrikes(underlyingConid, month);
+      let strikesData: { call: number[]; put: number[] };
+      try {
+        strikesData = await ibkrClient.getStrikes(underlyingConid, month);
+      } catch {
+        // Month may not have listed options — skip silently.
+        continue;
+      }
       const callStrikes = filterStrikesInRange(strikesData.call ?? [], spotPrice);
       const putStrikes = filterStrikesInRange(strikesData.put ?? [], spotPrice);
 

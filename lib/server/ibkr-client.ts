@@ -187,30 +187,37 @@ export async function searchConid(symbol: string): Promise<string> {
 // Option chain metadata
 // ---------------------------------------------------------------------------
 
-type IbkrSecdefEntry = {
-  conid?: number;
-  month?: string;
-  maturityDate?: string;
-  right?: string;
-  strike?: number;
-};
+const MONTH_ABBRS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                     'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'] as const;
 
-export async function getOptionMonths(underlyingConid: string): Promise<string[]> {
-  await initAccount();
-  const results = await ibkrFetch<IbkrSecdefEntry[]>(
-    `/v1/api/iserver/secdef/info?conid=${encodeURIComponent(underlyingConid)}&sectype=OPT&month=&right=C&strike=0`,
-  );
-  if (!Array.isArray(results)) return [];
-  const months = new Set<string>();
-  for (const entry of results) {
-    if (typeof entry.month === 'string' && entry.month) {
-      months.add(entry.month);
-    }
+/**
+ * Generate IBKR month codes (e.g. "AUG26") for all calendar months that
+ * overlap the [startMs, endMs] window. No API call required — month codes
+ * are deterministic from the current date.
+ */
+export function generateOptionMonths(startMs: number, endMs: number): string[] {
+  const months: string[] = [];
+  // Start at the first day of the month containing startMs
+  const d = new Date(startMs);
+  d.setUTCDate(1);
+  d.setUTCHours(0, 0, 0, 0);
+
+  while (d.getTime() <= endMs) {
+    const abbr = MONTH_ABBRS[d.getUTCMonth()];
+    const year = String(d.getUTCFullYear()).slice(-2);
+    months.push(`${abbr}${year}`);
+    d.setUTCMonth(d.getUTCMonth() + 1);
   }
-  return [...months];
+  return months;
 }
 
 type IbkrStrikesResponse = { call: number[]; put: number[] };
+
+type IbkrSecdefEntry = {
+  conid?: number;
+  maturityDate?: string;
+  strike?: number;
+};
 
 export async function getStrikes(
   underlyingConid: string,
