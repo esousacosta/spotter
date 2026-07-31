@@ -45,7 +45,10 @@ export type RankedForwardVolRow = ForwardVolRow & {
 export type TopForwardVolResponse = {
   asOf: string;
   scannedSymbols: number;
+  processedSymbols: number;
   successfulSymbols: number;
+  isComplete: boolean;
+  isWarming: boolean;
   rows: RankedForwardVolRow[];
 };
 

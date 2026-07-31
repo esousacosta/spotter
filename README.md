@@ -124,11 +124,13 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Testing
 
-Run the unit tests for the volatility engine:
+Run the test suite:
 
 ```bash
 npm test
 ```
+
+The suite includes a functional guard for UI-triggered requests: if an API call hangs, the request times out so buttons do not stay loading forever.
 
 ## Detailed feature docs
 

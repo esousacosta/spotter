@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import type {
   ForwardVolResponse,
   PreEarningsRejectedRow,
@@ -15,6 +16,7 @@ import type {
 } from "@/lib/types";
 
 const DEFAULT_SYMBOL = "AAPL";
+const UI_REQUEST_TIMEOUT_MS = 30_000;
 
 function asPct(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
@@ -56,7 +58,10 @@ export function SpotterApp() {
   const [topRows, setTopRows] = useState<RankedForwardVolRow[]>([]);
   const [topScanMeta, setTopScanMeta] = useState<{
     scannedSymbols: number;
+    processedSymbols: number;
     successfulSymbols: number;
+    isComplete: boolean;
+    isWarming: boolean;
   } | null>(null);
   const [preRows, setPreRows] = useState<PreEarningsRow[]>([]);
   const [preRejectedRows, setPreRejectedRows] = useState<PreEarningsRejectedRow[]>([]);
@@ -84,6 +89,7 @@ export function SpotterApp() {
   const [preError, setPreError] = useState<string | null>(null);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
   const preRefreshInFlight = useRef(false);
+  const topRefreshInFlight = useRef(false);
 
   useEffect(() => {
     async function loadTickers() {
@@ -91,7 +97,7 @@ export function SpotterApp() {
       setError(null);
 
       try {
-        const response = await fetch("/api/tickers");
+        const response = await fetchWithTimeout("/api/tickers", {}, UI_REQUEST_TIMEOUT_MS);
         if (!response.ok) {
           throw new Error(`Ticker request failed (${response.status}).`);
         }
@@ -126,11 +132,11 @@ export function SpotterApp() {
       setError(null);
 
       try {
-        const response = await fetch("/api/forward-vol", {
+        const response = await fetchWithTimeout("/api/forward-vol", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ symbol }),
-        });
+        }, UI_REQUEST_TIMEOUT_MS);
 
         const payload = (await response.json()) as ForwardVolResponse | { error: string };
         if (!response.ok || "error" in payload) {
@@ -150,6 +156,24 @@ export function SpotterApp() {
 
     void loadForwardVol();
   }, [symbol]);
+
+  useEffect(() => {
+    if (activeTab !== "forward" || !topScanMeta?.isWarming) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      if (topRefreshInFlight.current) {
+        return;
+      }
+      topRefreshInFlight.current = true;
+      void loadTopRows(true).finally(() => {
+        topRefreshInFlight.current = false;
+      });
+    }, 2500);
+
+    return () => window.clearInterval(interval);
+  }, [activeTab, topScanMeta?.isWarming]);
 
   useEffect(() => {
     if (activeTab !== "preearnings" || !preMeta?.isWarming) {
@@ -175,16 +199,18 @@ export function SpotterApp() {
   const hasPreRejectedRows = useMemo(() => preRejectedRows.length > 0, [preRejectedRows.length]);
   const hasUpcomingRows = useMemo(() => upcomingRows.length > 0, [upcomingRows.length]);
 
-  async function loadTopRows() {
-    setTopRowsLoading(true);
-    setTopError(null);
+  async function loadTopRows(silent = false) {
+    if (!silent) {
+      setTopRowsLoading(true);
+      setTopError(null);
+    }
 
     try {
-      const response = await fetch("/api/top-forward-vol", {
+      const response = await fetchWithTimeout("/api/top-forward-vol", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topN: 10 }),
-      });
+      }, UI_REQUEST_TIMEOUT_MS);
 
       const payload = (await response.json()) as TopForwardVolResponse | { error: string };
       if (!response.ok || "error" in payload) {
@@ -195,15 +221,22 @@ export function SpotterApp() {
       setTopRows(payload.rows);
       setTopScanMeta({
         scannedSymbols: payload.scannedSymbols,
+        processedSymbols: payload.processedSymbols,
         successfulSymbols: payload.successfulSymbols,
+        isComplete: payload.isComplete,
+        isWarming: payload.isWarming,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load top opportunities.";
       setTopError(message);
-      setTopRows([]);
-      setTopScanMeta(null);
+      if (!silent) {
+        setTopRows([]);
+        setTopScanMeta(null);
+      }
     } finally {
-      setTopRowsLoading(false);
+      if (!silent) {
+        setTopRowsLoading(false);
+      }
     }
   }
 
@@ -214,11 +247,11 @@ export function SpotterApp() {
     }
 
     try {
-      const response = await fetch("/api/pre-earnings-viable", {
+      const response = await fetchWithTimeout("/api/pre-earnings-viable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topN: 10 }),
-      });
+      }, UI_REQUEST_TIMEOUT_MS);
 
       const payload = (await response.json()) as TopPreEarningsResponse | { error: string };
       if (!response.ok || "error" in payload) {
@@ -255,11 +288,11 @@ export function SpotterApp() {
     setUpcomingError(null);
 
     try {
-      const response = await fetch("/api/upcoming-earnings", {
+      const response = await fetchWithTimeout("/api/upcoming-earnings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ daysAhead: 21, limit: 500 }),
-      });
+      }, UI_REQUEST_TIMEOUT_MS);
 
       const payload = (await response.json()) as UpcomingEarningsResponse | { error: string };
       if (!response.ok || "error" in payload) {
@@ -339,6 +372,9 @@ export function SpotterApp() {
           {error ? <p className="error">{error}</p> : null}
           {rowsLoading ? <p className="muted">Calculating forward volatility edge...</p> : null}
           {topRowsLoading ? <p className="muted">Scanning symbols to find top edges...</p> : null}
+          {!topRowsLoading && topScanMeta?.isWarming ? (
+            <p className="muted">Top-opportunities scan in progress... refreshing as new symbols complete.</p>
+          ) : null}
           {topError ? <p className="error">{topError}</p> : null}
           {!rowsLoading && !hasRows ? <p className="muted">No results available for this symbol.</p> : null}
 
@@ -402,8 +438,9 @@ export function SpotterApp() {
 
           {topScanMeta ? (
             <p className="muted">
-              Scanned {topScanMeta.scannedSymbols} symbols, found valid opportunities for{" "}
-              {topScanMeta.successfulSymbols}.
+              Scanned {topScanMeta.scannedSymbols} symbols, processed {topScanMeta.processedSymbols}, found valid
+              opportunities for {topScanMeta.successfulSymbols}
+              {topScanMeta.isComplete ? "." : " so far."}
             </p>
           ) : null}
 

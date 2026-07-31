@@ -7,6 +7,7 @@ type CacheEntry<T> = {
   value: T;
 };
 
+const CACHE_FILE_FORMAT_VERSION = 2;
 const DEFAULT_CACHE_DIR = path.join(os.tmpdir(), "forward-vol-spotter-cache");
 const CACHE_DIR = process.env.CACHE_DIR?.trim() || DEFAULT_CACHE_DIR;
 const CACHE_EXTENSION = ".json";
@@ -30,6 +31,43 @@ function ensureCacheDir(): void {
   }
 }
 
+function cacheJsonReplacer(_key: string, value: unknown): unknown {
+  if (value instanceof Map) {
+    return {
+      __cacheType: "Map",
+      entries: [...value.entries()],
+    };
+  }
+  if (value instanceof Set) {
+    return {
+      __cacheType: "Set",
+      values: [...value.values()],
+    };
+  }
+  return value;
+}
+
+function cacheJsonReviver(_key: string, value: unknown): unknown {
+  const objectValue = value as Record<string, unknown> | null;
+  if (
+    objectValue &&
+    objectValue.__cacheType === "Map" &&
+    Array.isArray(objectValue.entries)
+  ) {
+    return new Map((objectValue.entries as unknown[]) as Array<[unknown, unknown]>);
+  }
+
+  if (
+    objectValue &&
+    objectValue.__cacheType === "Set" &&
+    Array.isArray(objectValue.values)
+  ) {
+    return new Set(objectValue.values as unknown[]);
+  }
+
+  return value;
+}
+
 function loadDiskCacheIntoMemory(): void {
   ensureCacheDir();
 
@@ -45,7 +83,15 @@ function loadDiskCacheIntoMemory(): void {
       const fullPath = path.join(CACHE_DIR, file);
       try {
         const raw = fs.readFileSync(fullPath, "utf8");
-        const parsed = JSON.parse(raw) as { key?: string; expiresAtMs?: number; value?: unknown };
+        const parsed = JSON.parse(raw, cacheJsonReviver) as {
+          formatVersion?: number;
+          key?: string;
+          expiresAtMs?: number;
+          value?: unknown;
+        };
+        if (parsed.formatVersion !== CACHE_FILE_FORMAT_VERSION) {
+          continue;
+        }
         if (
           typeof parsed.key !== "string" ||
           typeof parsed.expiresAtMs !== "number" ||
@@ -81,12 +127,12 @@ async function persistCacheEntry(key: string, entry: CacheEntry<unknown>): Promi
   ensureCacheDir();
   const payload = JSON.stringify(
     {
+      formatVersion: CACHE_FILE_FORMAT_VERSION,
       key,
       expiresAtMs: entry.expiresAtMs,
       value: entry.value,
     },
-    null,
-    0,
+    cacheJsonReplacer,
   );
   const filePath = toCacheFilePath(key);
   await fs.promises.writeFile(filePath, payload, "utf8");

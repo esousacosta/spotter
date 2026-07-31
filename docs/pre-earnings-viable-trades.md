@@ -325,6 +325,7 @@ Rejected rows are returned separately in `rejectedRows`.
 - Symbols outside the current 21-day announced-earnings window are rejected before any option-chain or historical-bar fetches happen.
 - The scan endpoint returns the latest cached snapshot immediately and the UI polls for refreshes while the background scan is still running, so the button does not wait for the full scan to complete.
 - Completed scan snapshots are persisted to disk and reused across server restarts while still fresh.
+- UI-triggered API calls use a request-timeout guard so loading states cannot hang forever if a request stalls.
 
 ---
 
