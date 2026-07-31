@@ -15,9 +15,12 @@ import type {
   Ticker,
 } from "@/lib/types";
 
-const CONCURRENCY = 1;
+const isLiveMode = process.env.IBKR_ENABLED === 'true';
+// Cboe requires strict sequential processing with inter-batch pauses to avoid 429s.
+// IBKR is localhost so concurrency is safe and pauses are unnecessary.
+const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
 const BATCH_SIZE = 5;
-const INTER_BATCH_PAUSE_MS = 5_000;
+const INTER_BATCH_PAUSE_MS = isLiveMode ? 0 : 5_000;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 const PRE_EARNINGS_WINDOW_DAYS = 21;
 const MAX_THROTTLED_SYMBOL_RETRIES = 2;
@@ -46,6 +49,22 @@ const LEGACY_MAP_SHAPE_ERROR_FRAGMENT = "chain.callsbyexpiry.keys";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Run tasks over items with at most `concurrency` in-flight at a time. */
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const index = next++;
+      await fn(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -198,12 +217,7 @@ async function processScan(state: ScanState, tickers: Ticker[]): Promise<void> {
     now,
   );
 
-  if (CONCURRENCY !== 1) {
-    throw new Error("Pre-earnings scan must run with concurrency=1 for Cboe rate-limit control.");
-  }
-
-  for (let i = 0; i < tickers.length; i += 1) {
-    const ticker = tickers[i];
+  async function processOneTicker(ticker: Ticker, index: number): Promise<void> {
     const earningsInfo = earningsMap.get(ticker.symbol) ?? null;
     const nextEarningsDate = earningsInfo?.nextEarningsDate ?? null;
     const daysToEarnings =
@@ -315,12 +329,16 @@ async function processScan(state: ScanState, tickers: Ticker[]): Promise<void> {
       }
     }
 
-    if ((i + 1) % BATCH_SIZE === 0 && i + 1 < tickers.length) {
-      console.info(`[pre-earnings] processed ${i + 1}/${tickers.length}; pausing ${INTER_BATCH_PAUSE_MS}ms`);
+    // Cboe only: pause after every BATCH_SIZE symbols to stay under the rate limit.
+    if (INTER_BATCH_PAUSE_MS > 0 && (index + 1) % BATCH_SIZE === 0 && index + 1 < tickers.length) {
+      console.info(`[pre-earnings] processed ${index + 1}/${tickers.length}; pausing ${INTER_BATCH_PAUSE_MS}ms`);
       await sleep(INTER_BATCH_PAUSE_MS);
     }
   }
+
+  await runWithConcurrency(tickers, SCAN_CONCURRENCY, processOneTicker);
 }
+
 
 async function startScan(scanLimit: number): Promise<ScanState> {
   const existing = scanStates.get(scanLimit);

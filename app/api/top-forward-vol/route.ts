@@ -14,7 +14,10 @@ const requestSchema = z.object({
   topN: z.number().int().positive().optional(),
 });
 
-const CONCURRENCY = 1;
+const isLiveMode = process.env.IBKR_ENABLED === 'true';
+// Cboe pacing requires strict sequential processing; IBKR is localhost so
+// multiple symbols can be processed concurrently without throttle risk.
+const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type TopScanState = {
@@ -48,6 +51,22 @@ function toResponse(state: TopScanState, topN: number | null): TopForwardVolResp
   };
 }
 
+/** Run tasks over items with at most `concurrency` in-flight at a time. */
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const item = items[next++];
+      await fn(item);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+}
+
 async function runTopScan(state: TopScanState): Promise<void> {
   const tickers = await marketDataProvider.getSP500Tickers();
   const targets = normalizeTargets(undefined);
@@ -57,11 +76,8 @@ async function runTopScan(state: TopScanState): Promise<void> {
   );
 
   state.scannedSymbols = tickers.length;
-  if (CONCURRENCY !== 1) {
-    throw new Error("Top-forward scan must run with concurrency=1 for stable Cboe pacing.");
-  }
 
-  for (const ticker of tickers) {
+  await runWithConcurrency(tickers, SCAN_CONCURRENCY, async (ticker) => {
     try {
       const symbolRows = await computeForwardVolRowsForSymbol(
         ticker.symbol,
@@ -82,7 +98,7 @@ async function runTopScan(state: TopScanState): Promise<void> {
     } finally {
       state.processedSymbols += 1;
     }
-  }
+  });
 }
 
 async function ensureTopScan(): Promise<TopScanState> {

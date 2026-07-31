@@ -9,7 +9,9 @@
 
 const IBKR_GATEWAY_URL = process.env.IBKR_GATEWAY_URL ?? 'https://localhost:5001';
 const IBKR_REQUEST_TIMEOUT_MS = 15_000;
-const IBKR_REQUEST_GAP_MS = 50;
+// Light pacing for localhost — much lower than the Cboe gap (1 500 ms).
+// Reduce further only if the gateway becomes a bottleneck.
+const IBKR_REQUEST_GAP_MS = 10;
 const BRIDGE_RETRY_DELAY_MS = 3_000;
 
 let lastRequestMs = 0;
