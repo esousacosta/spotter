@@ -11,7 +11,7 @@ import { marketDataProvider } from "@/lib/server/market-data-provider";
 import type { RankedForwardVolRow, TopForwardVolResponse } from "@/lib/types";
 
 const requestSchema = z.object({
-  topN: z.number().int().positive().max(50).optional(),
+  topN: z.number().int().positive().optional(),
 });
 
 const CONCURRENCY = 1;
@@ -30,7 +30,7 @@ type TopScanState = {
 
 let topScanState: TopScanState | null = null;
 
-function toResponse(state: TopScanState, topN: number): TopForwardVolResponse {
+function toResponse(state: TopScanState, topN: number | null): TopForwardVolResponse {
   const sorted = [...state.rows].sort((a, b) => {
     const aEdge = a.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
     const bEdge = b.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
@@ -44,7 +44,7 @@ function toResponse(state: TopScanState, topN: number): TopForwardVolResponse {
     successfulSymbols: state.successfulSymbols,
     isComplete: state.status === "complete",
     isWarming: state.status === "running",
-    rows: sorted.slice(0, topN),
+    rows: topN === null ? sorted : sorted.slice(0, topN),
   };
 }
 
@@ -128,7 +128,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const topN = payload.topN ?? 10;
+  const topN = payload.topN ?? null; // null = no limit
 
   try {
     const state = await ensureTopScan();

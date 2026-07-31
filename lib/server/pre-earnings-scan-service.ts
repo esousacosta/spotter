@@ -98,7 +98,7 @@ function buildFetchFailureRow(
   });
 }
 
-function snapshotFromState(state: ScanState, topN: number): TopPreEarningsResponse {
+function snapshotFromState(state: ScanState, topN: number | null): TopPreEarningsResponse {
   const sortedRows = [...state.rows].sort((a, b) => comparePreEarningsRows(a, b, new Date(state.asOf)));
   const sortedRejectedRows = [...state.rejectedRows].sort((a, b) =>
     compareRejectedPreEarningsRows(a, b, new Date(state.asOf)),
@@ -113,7 +113,7 @@ function snapshotFromState(state: ScanState, topN: number): TopPreEarningsRespon
     rejectedSymbols: sortedRejectedRows.length,
     isComplete: state.status === "complete",
     isWarming: state.status === "running",
-    rows: sortedRows.slice(0, topN),
+    rows: topN === null ? sortedRows : sortedRows.slice(0, topN),
     rejectedRows: sortedRejectedRows,
   };
 }
@@ -400,7 +400,7 @@ export async function getPreEarningsScan(options: {
 }): Promise<TopPreEarningsResponse> {
   const allTickers = await marketDataProvider.getSP500Tickers();
   const scanLimit = options.scanLimit ?? allTickers.length;
-  const topN = options.topN ?? 10;
+  const topN = options.topN ?? null; // null = no limit
   const state = await startScan(scanLimit);
   return snapshotFromState(state, topN);
 }

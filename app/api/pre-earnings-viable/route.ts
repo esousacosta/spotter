@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getPreEarningsScan } from "@/lib/server/pre-earnings-scan-service";
 
 const requestSchema = z.object({
-  topN: z.number().int().positive().max(50).optional(),
+  topN: z.number().int().positive().optional(),
   scanLimit: z.number().int().positive().max(500).optional(),
 });
 

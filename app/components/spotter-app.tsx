@@ -209,7 +209,7 @@ export function SpotterApp() {
       const response = await fetchWithTimeout("/api/top-forward-vol", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topN: 10 }),
+        body: JSON.stringify({}),
       }, UI_REQUEST_TIMEOUT_MS);
 
       const payload = (await response.json()) as TopForwardVolResponse | { error: string };
@@ -250,7 +250,7 @@ export function SpotterApp() {
       const response = await fetchWithTimeout("/api/pre-earnings-viable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topN: 10 }),
+        body: JSON.stringify({}),
       }, UI_REQUEST_TIMEOUT_MS);
 
       const payload = (await response.json()) as TopPreEarningsResponse | { error: string };
@@ -365,7 +365,7 @@ export function SpotterApp() {
               )}
             </select>
             <button type="button" onClick={() => void loadTopRows()} disabled={topRowsLoading}>
-              {topRowsLoading ? "Scanning S&P 500..." : "Find top 10 opportunities"}
+              {topRowsLoading ? "Scanning S&P 500..." : "Find all opportunities"}
             </button>
           </section>
 
@@ -510,7 +510,7 @@ export function SpotterApp() {
         <>
           <section className="controls">
             <button type="button" onClick={() => void loadPreEarningsRows()} disabled={preRowsLoading}>
-              {preRowsLoading ? "Scanning pre-earnings setups..." : "Find top 10 pre-earnings viable trades"}
+              {preRowsLoading ? "Scanning pre-earnings setups..." : "Find all pre-earnings viable trades"}
             </button>
           </section>
 
