@@ -20,11 +20,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  export async function DELETE() {
-    await clearPreEarningsScanCache();
-    return NextResponse.json({ ok: true });
-  }
-
   try {
     const response = await getPreEarningsScan({
       topN: payload.topN,
@@ -38,4 +33,9 @@ export async function POST(request: Request) {
         : "Unexpected error while computing pre-earnings viable trades.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+export async function DELETE() {
+  await clearPreEarningsScanCache();
+  return NextResponse.json({ ok: true });
 }

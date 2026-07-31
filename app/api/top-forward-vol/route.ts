@@ -144,11 +144,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  export async function DELETE() {
-    topScanState = null;
-    return NextResponse.json({ ok: true });
-  }
-
   const topN = payload.topN ?? null; // null = no limit
 
   try {
@@ -161,4 +156,9 @@ export async function POST(request: Request) {
         : "Unexpected error while computing top forward volatility opportunities.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+export async function DELETE() {
+  topScanState = null;
+  return NextResponse.json({ ok: true });
 }
