@@ -15,9 +15,9 @@ const requestSchema = z.object({
 });
 
 const isLiveMode = process.env.IBKR_ENABLED === 'true';
-// Cboe pacing requires strict sequential processing; IBKR is localhost so
-// multiple symbols can be processed concurrently without throttle risk.
-const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
+// Cboe pacing requires strict sequential processing.
+// IBKR tolerates parallelism, but high fan-out can still trigger secdef 429s.
+const SCAN_CONCURRENCY = isLiveMode ? 2 : 1;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type TopScanState = {

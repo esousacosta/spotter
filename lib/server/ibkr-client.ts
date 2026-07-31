@@ -11,7 +11,7 @@ const IBKR_GATEWAY_URL = process.env.IBKR_GATEWAY_URL ?? 'https://localhost:5001
 const IBKR_REQUEST_TIMEOUT_MS = 15_000;
 // Light pacing for localhost — much lower than the Cboe gap (1 500 ms).
 // Reduce further only if the gateway becomes a bottleneck.
-const IBKR_REQUEST_GAP_MS = 10;
+const IBKR_REQUEST_GAP_MS = 25;
 const BRIDGE_RETRY_DELAY_MS = 3_000;
 
 function sleep(ms: number): Promise<void> {
@@ -42,12 +42,15 @@ async function rawFetch(path: string, options: RequestInit = {}): Promise<Respon
 
 const MAX_503_RETRIES = 4;
 const RETRY_503_DELAY_MS = 2_000;
+const MAX_429_RETRIES = 5;
+const RETRY_429_BASE_DELAY_MS = 1_000;
 
 async function ibkrFetch<T>(
   path: string,
   options: RequestInit = {},
-  // retries503: remaining 503-retry budget; bridgeRetried: prevent infinite bridge-repair loop
+  // retries503/retries429: remaining retry budgets; bridgeRetried prevents infinite bridge-repair loop
   retries503 = MAX_503_RETRIES,
+  retries429 = MAX_429_RETRIES,
   bridgeRetried = false,
 ): Promise<T> {
   await paceRequest();
@@ -88,7 +91,15 @@ async function ibkrFetch<T>(
   if (response.status === 503 && retries503 > 0) {
     console.warn(`[ibkr] 503 on ${path} — retrying in ${RETRY_503_DELAY_MS}ms (${retries503} left)`);
     await sleep(RETRY_503_DELAY_MS);
-    return ibkrFetch<T>(path, options, retries503 - 1, bridgeRetried);
+    return ibkrFetch<T>(path, options, retries503 - 1, retries429, bridgeRetried);
+  }
+
+  if (response.status === 429 && retries429 > 0) {
+    const attempt = MAX_429_RETRIES - retries429;
+    const delayMs = Math.min(RETRY_429_BASE_DELAY_MS * 2 ** attempt, 8_000);
+    console.warn(`[ibkr] 429 on ${path} — retrying in ${delayMs}ms (${retries429} left)`);
+    await sleep(delayMs);
+    return ibkrFetch<T>(path, options, retries503, retries429 - 1, bridgeRetried);
   }
 
   // "no bridge" means the iserver bridge to TWS/IB Gateway isn't established yet.
@@ -99,7 +110,7 @@ async function ibkrFetch<T>(
       console.warn('[ibkr] "no bridge" — calling re-authenticate and retrying in 3 s…');
       await rawFetch('/v1/api/iserver/re-authenticate', { method: 'POST' }).catch(() => {});
       await sleep(BRIDGE_RETRY_DELAY_MS);
-      return ibkrFetch<T>(path, options, retries503, true);
+      return ibkrFetch<T>(path, options, retries503, retries429, true);
     }
     throw new Error(`IBKR request failed (400): ${body.slice(0, 240)}`);
   }

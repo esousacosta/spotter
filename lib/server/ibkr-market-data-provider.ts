@@ -133,6 +133,9 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
     // Collect option contract entries for all relevant months / filtered strikes
     const callEntries: ibkrClient.OptionContractEntry[] = [];
     const putEntries: ibkrClient.OptionContractEntry[] = [];
+    let successfulStrikesMonths = 0;
+    let saw429OnStrikes = false;
+    let firstStrikesError: string | null = null;
 
     for (const month of relevantMonths) {
       let strikesData: { call: number[]; put: number[] };
@@ -141,9 +144,12 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
       } catch (err) {
         // Month may not have listed options — skip, but log so real errors are visible.
         const msg = err instanceof Error ? err.message : String(err);
+        if (firstStrikesError === null) firstStrikesError = msg;
+        if (msg.includes('(429)')) saw429OnStrikes = true;
         console.warn(`[ibkr] ${symbol} ${month}: getStrikes failed (${msg}) — skipping month`);
         continue;
       }
+      successfulStrikesMonths += 1;
       const callStrikes = filterStrikesInRange(strikesData.call ?? [], spotPrice);
       const putStrikes = filterStrikesInRange(strikesData.put ?? [], spotPrice);
 
@@ -158,6 +164,14 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
     }
 
     if (callEntries.length === 0) {
+      if (successfulStrikesMonths === 0 && saw429OnStrikes) {
+        throw new Error(`IBKR rate-limited secdef/strikes for ${symbol}; try again in a few seconds.`);
+      }
+      if (successfulStrikesMonths === 0 && firstStrikesError) {
+        throw new Error(
+          `No option contracts loaded for ${symbol} because secdef/strikes failed for all months: ${firstStrikesError}`,
+        );
+      }
       throw new Error(`No call option contracts found for ${symbol} within strike range.`);
     }
 

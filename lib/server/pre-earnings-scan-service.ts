@@ -17,8 +17,8 @@ import type {
 
 const isLiveMode = process.env.IBKR_ENABLED === 'true';
 // Cboe requires strict sequential processing with inter-batch pauses to avoid 429s.
-// IBKR is localhost so concurrency is safe and pauses are unnecessary.
-const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
+// IBKR supports parallelism, but a smaller pool prevents secdef 429 bursts.
+const SCAN_CONCURRENCY = isLiveMode ? 2 : 1;
 const BATCH_SIZE = 5;
 const INTER_BATCH_PAUSE_MS = isLiveMode ? 0 : 5_000;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
