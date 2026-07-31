@@ -50,7 +50,7 @@ describe("forward-trade-analytics service", () => {
     vi.spyOn(marketDataProvider, "getOptionSnapshot").mockResolvedValue({
       spotPrice: 100,
       expirations: [shortExpiryUnix, longExpiryUnix],
-      volume: null,
+      volume: null, quoteTime: null,
     });
 
     vi.spyOn(marketDataProvider, "getOptionChainCalls").mockImplementation(async (_symbol, expiryUnix) => {
@@ -84,7 +84,7 @@ describe("forward-trade-analytics service", () => {
     vi.spyOn(marketDataProvider, "getOptionSnapshot").mockResolvedValue({
       spotPrice: 100,
       expirations: [shortExpiryUnix, longExpiryUnix],
-      volume: null,
+      volume: null, quoteTime: null,
     });
     vi.spyOn(marketDataProvider, "getOptionChainCalls").mockImplementation(async (_symbol, expiryUnix) => {
       if (expiryUnix === shortExpiryUnix) {
@@ -107,7 +107,7 @@ describe("forward-trade-analytics service", () => {
     vi.spyOn(marketDataProvider, "getOptionSnapshot").mockResolvedValue({
       spotPrice: 100,
       expirations: [],
-      volume: null,
+      volume: null, quoteTime: null,
     });
     vi.spyOn(marketDataProvider, "getOptionChainCalls").mockResolvedValue([]);
 

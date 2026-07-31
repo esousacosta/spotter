@@ -30,6 +30,7 @@ type CboeOptionsResponse = {
     current_price?: number;
     prev_day_close?: number;
     volume?: number | string;
+    last_trade_time?: string;
     options?: CboeOptionRow[];
   };
 };
@@ -46,6 +47,7 @@ export type OptionSnapshot = {
   spotPrice: number;
   expirations: number[];
   volume: number | null;
+  quoteTime: string | null;
 };
 
 export type HistoricalDailyBar = {
@@ -62,6 +64,7 @@ type ParsedCboeChain = {
   callsByExpiry: Map<number, OptionContract[]>;
   putsByExpiry: Map<number, OptionContract[]>;
   volume: number | null;
+  quoteTime: string | null;
 };
 
 function normalizeExpiryMap(input: unknown): Map<number, OptionContract[]> {
@@ -380,6 +383,7 @@ async function loadCboeChain(symbol: string): Promise<ParsedCboeChain> {
       callsByExpiry,
       putsByExpiry,
       volume,
+      quoteTime: typeof data.last_trade_time === "string" ? data.last_trade_time : null,
     };
   });
 
@@ -388,6 +392,7 @@ async function loadCboeChain(symbol: string): Promise<ParsedCboeChain> {
     callsByExpiry: normalizeExpiryMap(chain.callsByExpiry),
     putsByExpiry: normalizeExpiryMap(chain.putsByExpiry),
     volume: chain.volume,
+    quoteTime: chain.quoteTime,
   };
 }
 
@@ -493,6 +498,7 @@ export const marketDataProvider = {
       spotPrice: chain.spotPrice,
       expirations,
       volume: chain.volume,
+      quoteTime: chain.quoteTime,
     };
   },
 

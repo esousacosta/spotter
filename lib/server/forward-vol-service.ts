@@ -317,6 +317,7 @@ export async function computeForwardVolRowsForSymbol(
         isViable: viable,
         status: "ok" as const,
         notes,
+        quoteTime: snapshot.quoteTime,
       };
     }),
   );

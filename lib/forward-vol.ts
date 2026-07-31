@@ -163,6 +163,7 @@ export function emptyInvalidRow(target: TargetPair, notes: string): ForwardVolRo
     isViable: false,
     status: "invalid",
     notes,
+    quoteTime: null,
   };
 }
 

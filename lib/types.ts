@@ -29,6 +29,7 @@ export type ForwardVolRow = {
   isViable: boolean;
   status: "ok" | "invalid";
   notes: string;
+  quoteTime: string | null;
 };
 
 export type ForwardVolResponse = {
@@ -134,6 +135,7 @@ export type PreEarningsRow = {
   verdict: PreEarningsVerdict;
   isViable: boolean;
   notes: string;
+  quoteTime: string | null;
 };
 
 export type PreEarningsRejectedRow = {

@@ -21,6 +21,7 @@ function makeRow(overrides: Partial<PreEarningsRow>): PreEarningsRow {
     verdict: "recommended",
     isViable: true,
     notes: "ok",
+    quoteTime: null,
     ...overrides,
   };
 }

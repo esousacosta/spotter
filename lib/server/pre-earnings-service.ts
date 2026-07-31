@@ -410,6 +410,7 @@ export async function computePreEarningsRow(
         : verdict === "consider"
           ? "Consider: term-structure check passed with one supporting signal."
           : "Avoid: pre-earnings viability checks did not pass.",
+    quoteTime: snapshot.quoteTime,
   };
 
   if (verdict === "avoid") {

@@ -966,6 +966,7 @@ export function SpotterApp() {
                     <th>Raw Edge</th>
                     <th>Adj Edge</th>
                     <th>Viable?</th>
+                    <th>Quote Time</th>
                     <th>Notes</th>
                   </tr>
                 </thead>
@@ -1014,6 +1015,7 @@ export function SpotterApp() {
                           <td>{asPct(row.rawForwardVolEdge)}</td>
                           <td>{asPct(row.adjustedForwardVolEdge)}</td>
                           <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
+                          <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
                           <td>{row.notes}</td>
                         </tr>
                         {isExpanded ? (
@@ -1075,6 +1077,7 @@ export function SpotterApp() {
                     <th>Raw Edge</th>
                     <th>Adj Edge</th>
                     <th>Viable?</th>
+                    <th>Quote Time</th>
                     <th>Notes</th>
                   </tr>
                 </thead>
@@ -1125,11 +1128,12 @@ export function SpotterApp() {
                           <td>{asPct(row.rawForwardVolEdge)}</td>
                           <td>{asPct(row.adjustedForwardVolEdge)}</td>
                           <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
+                          <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
                           <td>{row.notes}</td>
                         </tr>
                         {isExpanded ? (
                           <tr className="row-drilldown">
-                            <td colSpan={17}>
+                            <td colSpan={18}>
                               <ForwardTradeDetailsPanel
                                 loading={analyticsLoading}
                                 error={analyticsError}
@@ -1217,6 +1221,7 @@ export function SpotterApp() {
                       <AcronymHint short="TS" title="Term Structure" /> Slope Check
                     </th>
                     <th>Expected Move</th>
+                    <th>Quote Time</th>
                     <th>Notes</th>
                   </tr>
                 </thead>
@@ -1236,6 +1241,7 @@ export function SpotterApp() {
                       <td>{row.iv30Rv30Pass ? "PASS" : "FAIL"}</td>
                       <td>{row.tsSlopePass ? "PASS" : "FAIL"}</td>
                       <td>{row.expectedMove ?? "—"}</td>
+                      <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
                       <td>{row.notes}</td>
                     </tr>
                   ))}
