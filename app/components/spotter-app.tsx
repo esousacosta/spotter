@@ -49,6 +49,18 @@ function verdictClass(row: PreEarningsRow): string {
   return "row-invalid";
 }
 
+function formatTimeAgo(isoString: string): string {
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  if (diffMs < 0) return "just now";
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ${diffMin % 60}m ago`;
+  return `${Math.floor(diffHr / 24)}d ago`;
+}
+
 export function SpotterApp() {
   const [activeTab, setActiveTab] = useState<"forward" | "preearnings" | "upcomingearnings">("forward");
   const [preEarningsSubtab, setPreEarningsSubtab] = useState<"viable" | "rejected">("viable");
@@ -57,6 +69,7 @@ export function SpotterApp() {
   const [data, setData] = useState<ForwardVolResponse | null>(null);
   const [topRows, setTopRows] = useState<RankedForwardVolRow[]>([]);
   const [topScanMeta, setTopScanMeta] = useState<{
+    asOf: string;
     scannedSymbols: number;
     processedSymbols: number;
     successfulSymbols: number;
@@ -67,6 +80,7 @@ export function SpotterApp() {
   const [preRejectedRows, setPreRejectedRows] = useState<PreEarningsRejectedRow[]>([]);
   const [upcomingRows, setUpcomingRows] = useState<UpcomingEarningsRow[]>([]);
   const [preMeta, setPreMeta] = useState<{
+    asOf: string;
     scannedSymbols: number;
     evaluatedSymbols: number;
     computedSymbols: number;
@@ -220,6 +234,7 @@ export function SpotterApp() {
 
       setTopRows(payload.rows);
       setTopScanMeta({
+        asOf: payload.asOf,
         scannedSymbols: payload.scannedSymbols,
         processedSymbols: payload.processedSymbols,
         successfulSymbols: payload.successfulSymbols,
@@ -262,6 +277,7 @@ export function SpotterApp() {
       setPreRows(payload.rows);
       setPreRejectedRows(payload.rejectedRows);
       setPreMeta({
+        asOf: payload.asOf,
         scannedSymbols: payload.scannedSymbols,
         evaluatedSymbols: payload.evaluatedSymbols,
         computedSymbols: payload.computedSymbols,
@@ -440,7 +456,8 @@ export function SpotterApp() {
             <p className="muted">
               Scanned {topScanMeta.scannedSymbols} symbols, processed {topScanMeta.processedSymbols}, found valid
               opportunities for {topScanMeta.successfulSymbols}
-              {topScanMeta.isComplete ? "." : " so far."}
+              {topScanMeta.isComplete ? "." : " so far."}{" "}
+              Data as of <strong>{formatTimeAgo(topScanMeta.asOf)}</strong>.
             </p>
           ) : null}
 
@@ -529,7 +546,8 @@ export function SpotterApp() {
             <p className="muted">
               Scanned {preMeta.scannedSymbols} symbols, attempted {preMeta.evaluatedSymbols}, computed{" "}
               {preMeta.computedSymbols}, viable {preMeta.viableSymbols}, rejected {preMeta.rejectedSymbols}
-              {preMeta.isComplete ? "." : " so far."}
+              {preMeta.isComplete ? "." : " so far."}{" "}
+              Data as of <strong>{formatTimeAgo(preMeta.asOf)}</strong>.
             </p>
           ) : null}
 
