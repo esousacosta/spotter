@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   ForwardVolResponse,
@@ -83,6 +83,7 @@ export function SpotterApp() {
   const [topError, setTopError] = useState<string | null>(null);
   const [preError, setPreError] = useState<string | null>(null);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
+  const preRefreshInFlight = useRef(false);
 
   useEffect(() => {
     async function loadTickers() {
@@ -155,11 +156,17 @@ export function SpotterApp() {
       return;
     }
 
-    const timeout = window.setTimeout(() => {
-      void loadPreEarningsRows(true);
-    }, 3000);
+    const interval = window.setInterval(() => {
+      if (preRefreshInFlight.current) {
+        return;
+      }
+      preRefreshInFlight.current = true;
+      void loadPreEarningsRows(true).finally(() => {
+        preRefreshInFlight.current = false;
+      });
+    }, 2500);
 
-    return () => window.clearTimeout(timeout);
+    return () => window.clearInterval(interval);
   }, [activeTab, preMeta?.isWarming]);
 
   const hasRows = useMemo(() => (data?.rows.length ?? 0) > 0, [data?.rows.length]);

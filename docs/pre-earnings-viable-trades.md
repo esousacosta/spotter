@@ -320,10 +320,11 @@ Rejected rows are returned separately in `rejectedRows`.
 ## Performance safeguards
 
 - In-flight cache deduplication prevents the same symbol from triggering duplicate concurrent option-chain fetches.
-- The full-universe pre-earnings scan is cached in memory for a short interval and reused across button clicks.
+- The full-universe pre-earnings scan is cached for 60 minutes and reused across button clicks.
 - The app warms that shared scan in the background right after ticker load, which spreads requests over time instead of concentrating them on button click.
 - Symbols outside the current 21-day announced-earnings window are rejected before any option-chain or historical-bar fetches happen.
 - The scan endpoint returns the latest cached snapshot immediately and the UI polls for refreshes while the background scan is still running, so the button does not wait for the full scan to complete.
+- Completed scan snapshots are persisted to disk and reused across server restarts while still fresh.
 
 ---
 

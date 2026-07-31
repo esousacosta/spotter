@@ -116,7 +116,7 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 - Earnings calendar data is pulled from Nasdaq's earnings calendar API.
 - Historical bars for RV30 / average-volume checks are pulled from Nasdaq's historical quote API.
 - S&P 500 constituents are fetched from the datasets/s-and-p-500-companies GitHub dataset (CSV), with a Wikipedia fallback.
-- Option-chain responses are cached in memory for 10 minutes; historical-bar responses are cached for 6 hours; ticker metadata is cached for 1 hour.
+- Option-chain responses are cached for 60 minutes; historical-bar responses are cached for 6 hours; ticker metadata is cached for 1 hour.
 - The market-data client now applies provider-specific pacing and retry/backoff when Cboe or Nasdaq return rate-limit responses.
 - The pre-earnings universe scan is warmed in the background after the app loads the ticker list, so later button clicks usually reuse a shared cached scan instead of launching a cold full-universe sweep.
 - The expensive market-data portion of the pre-earnings scan is limited to symbols with an announced earnings date in the next 21 calendar days; other symbols are rejected immediately as outside the current strategy window.

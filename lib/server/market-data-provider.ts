@@ -8,11 +8,11 @@ const S_AND_P_500_FALLBACK_URL =
 const CBOE_OPTIONS_URL = "https://cdn.cboe.com/api/global/delayed_quotes/options";
 const NASDAQ_HISTORICAL_URL = "https://api.nasdaq.com/api/quote";
 const TICKER_CACHE_TTL_MS = 60 * 60 * 1000;
-const OPTION_CHAIN_CACHE_TTL_MS = 10 * 60 * 1000;
+const OPTION_CHAIN_CACHE_TTL_MS = 60 * 60 * 1000;
 const HISTORICAL_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const CBOE_REQUEST_GAP_MS = 800;
+const CBOE_REQUEST_GAP_MS = 1500;
 const NASDAQ_REQUEST_GAP_MS = 25;
-const MAX_RATE_LIMIT_RETRIES = 3;
+const MAX_RATE_LIMIT_RETRIES = 5;
 
 const providerQueue = new Map<string, Promise<void>>();
 const providerNextAllowedMs = new Map<string, number>();
@@ -126,7 +126,8 @@ async function fetchText(
     const body = await response.text();
     if (response.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
       const retryAfterMs =
-        parseRetryAfterMs(response.headers.get("retry-after")) ?? 2_000 * 2 ** attempt;
+        parseRetryAfterMs(response.headers.get("retry-after")) ??
+        Math.min(2_000 * 2 ** attempt, 60_000);
       providerNextAllowedMs.set(
         options.provider,
         Math.max(providerNextAllowedMs.get(options.provider) ?? 0, Date.now() + retryAfterMs),

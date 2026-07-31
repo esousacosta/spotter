@@ -17,6 +17,7 @@
 - Completed performance fix: pre-earnings scan now deduplicates in-flight cache loads, warms the full-universe scan in the background right after ticker load, and reuses a shared cached scan so button clicks do not trigger a cold request burst.
 - Completed performance fix: the pre-earnings scan now rejects symbols outside the 21-day announced-earnings window before any expensive option/history fetches, which sharply reduces cold-scan latency.
 - Completed UX/performance fix: the pre-earnings endpoint now returns immediately with the latest cached snapshot while a background scan continues, and the UI auto-refreshes progress instead of blocking the button until the full scan completes.
+- Completed Cboe rate-limit hardening package: file-backed cache warm-load/write-through, 60-minute option-chain and scan TTLs, Cboe gap raised to 1500ms, sequential scan with 5-symbol batch pauses, 429 retries raised to 5 with 60s cap, startup warmup via root `instrumentation.ts`, and disk persistence/restore of completed pre-earnings scan snapshots across restarts.
 - Remaining from original roadmap: deeper reliability controls (retry policy), richer integration tests, and optional provider abstraction for a paid production feed.
 
 ## 1. Goal
