@@ -6,6 +6,7 @@ import {
   getBestValidRow,
   normalizeTargets,
 } from "@/lib/server/forward-vol-service";
+import { buildRankingReason } from "@/lib/server/ranking-reason";
 import { getNextEarningsForSymbols } from "@/lib/server/earnings-provider";
 import { marketDataProvider } from "@/lib/server/market-data-provider";
 import type { RankedForwardVolRow, TopForwardVolResponse } from "@/lib/types";
@@ -102,11 +103,14 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
       const bestRow = getBestValidRow(symbolRows);
       if (bestRow) {
         state.successfulSymbols += 1;
-        state.rows.push({
+        const rankedRow: RankedForwardVolRow = {
           symbol: ticker.symbol,
           companyName: ticker.name,
           ...bestRow,
-        });
+          rankingReason: null,
+        };
+        rankedRow.rankingReason = buildRankingReason(rankedRow);
+        state.rows.push(rankedRow);
       }
     } catch {
       // Skip per-symbol failures and keep scanning.

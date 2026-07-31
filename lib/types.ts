@@ -45,6 +45,7 @@ export type ForwardVolResponse = {
 export type RankedForwardVolRow = ForwardVolRow & {
   symbol: string;
   companyName: string;
+  rankingReason: string | null;
 };
 
 export type TopForwardVolResponse = {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   buildForwardTradeRowKey,
@@ -9,6 +9,8 @@ import {
   toggleExpandedRow,
 } from "@/lib/forward-trade-drilldown";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
+import { sortRows, toggleSort, type SortConfig } from "@/lib/table-sort";
+import { loadWatchlist, saveWatchlist } from "@/lib/watchlist";
 import type {
   ForwardTradeAnalyticsResponse,
   ForwardVolResponse,
@@ -27,11 +29,77 @@ const DEFAULT_SYMBOL = "AAPL";
 const UI_REQUEST_TIMEOUT_MS = 30_000;
 const FORWARD_VOL_REQUEST_TIMEOUT_MS = 60_000;
 
+const DEFAULT_FORWARD_SORT: SortConfig<ForwardVolRow> = {
+  key: "adjustedForwardVolEdge",
+  direction: "desc",
+};
+const DEFAULT_TOP_FORWARD_SORT: SortConfig<RankedForwardVolRow> = {
+  key: "adjustedForwardVolEdge",
+  direction: "desc",
+};
+const DEFAULT_PRE_EARNINGS_SORT: SortConfig<PreEarningsRow> = {
+  key: "verdict",
+  direction: "desc",
+};
+
+type ForwardFilters = {
+  viableOnly: boolean;
+  tradeClass: "all" | "standard" | "earnings-exposed";
+};
+
+type PreEarningsFilter = "recommended" | "consider-plus" | "all";
+
 function asPct(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
     return "—";
   }
   return `${(value * 100).toFixed(2)}%`;
+}
+
+function SortableHeader<T>({
+  children,
+  column,
+  config,
+  onSort,
+}: {
+  children: ReactNode;
+  column: keyof T;
+  config: SortConfig<T>;
+  onSort: (column: keyof T) => void;
+}) {
+  const active = config.key === column;
+  return (
+    <th className="th-sortable" aria-sort={active ? (config.direction === "asc" ? "ascending" : "descending") : "none"}>
+      <button type="button" onClick={() => onSort(column)}>
+        {children}
+        <span className="sort-indicator" aria-hidden="true">
+          {active ? (config.direction === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+function WatchlistButton({
+  active,
+  onClick,
+  symbol,
+}: {
+  active: boolean;
+  onClick: () => void;
+  symbol: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={active ? "watchlist-toggle is-active" : "watchlist-toggle"}
+      onClick={onClick}
+      aria-label={`${active ? "Remove" : "Add"} ${symbol} ${active ? "from" : "to"} watchlist`}
+      title={active ? "Remove from watchlist" : "Add to watchlist"}
+    >
+      <span aria-hidden="true">{active ? "★" : "☆"}</span>
+    </button>
+  );
 }
 
 function asNumber(value: number | null): string {
@@ -74,6 +142,16 @@ function asRatio(value: number | null): string {
 function asIsoDateTime(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString().replace(".000Z", "Z");
+}
+
+function daysUntilEarnings(value: string | null): string {
+  if (!value) {
+    return "—";
+  }
+  const target = new Date(`${value}T00:00:00Z`).getTime();
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  return Number.isFinite(target) ? Math.ceil((target - todayUtc) / 86_400_000).toString() : "—";
 }
 
 function AcronymHint({ short, title }: { short: string; title: string }) {
@@ -518,8 +596,6 @@ function ForwardTradeDetailsPanel({
 
 export function SpotterApp() {
   const [activeTab, setActiveTab] = useState<"forward" | "preearnings" | "upcomingearnings">("forward");
-  const [forwardSubtab, setForwardSubtab] = useState<"viable" | "rejected">("viable");
-  const [marketForwardSubtab, setMarketForwardSubtab] = useState<"viable" | "rejected">("viable");
   const [preEarningsSubtab, setPreEarningsSubtab] = useState<"viable" | "rejected">("viable");
   const [tickers, setTickers] = useState<Ticker[]>([]);
   const [symbol, setSymbol] = useState<string>(DEFAULT_SYMBOL);
@@ -538,6 +614,27 @@ export function SpotterApp() {
   const [preRows, setPreRows] = useState<PreEarningsRow[]>([]);
   const [preRejectedRows, setPreRejectedRows] = useState<PreEarningsRejectedRow[]>([]);
   const [upcomingRows, setUpcomingRows] = useState<UpcomingEarningsRow[]>([]);
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [watchlistReady, setWatchlistReady] = useState(false);
+  const [watchForwardRows, setWatchForwardRows] = useState<RankedForwardVolRow[]>([]);
+  const [watchPreRows, setWatchPreRows] = useState<PreEarningsRow[]>([]);
+  const [watchForwardError, setWatchForwardError] = useState<string | null>(null);
+  const [watchPreError, setWatchPreError] = useState<string | null>(null);
+  const [forwardSortConfig, setForwardSortConfig] =
+    useState<SortConfig<ForwardVolRow>>(DEFAULT_FORWARD_SORT);
+  const [topForwardSortConfig, setTopForwardSortConfig] =
+    useState<SortConfig<RankedForwardVolRow>>(DEFAULT_TOP_FORWARD_SORT);
+  const [preSortConfig, setPreSortConfig] =
+    useState<SortConfig<PreEarningsRow>>(DEFAULT_PRE_EARNINGS_SORT);
+  const [forwardFilters, setForwardFilters] = useState<ForwardFilters>({
+    viableOnly: true,
+    tradeClass: "all",
+  });
+  const [topForwardFilters, setTopForwardFilters] = useState<ForwardFilters>({
+    viableOnly: true,
+    tradeClass: "all",
+  });
+  const [preFilter, setPreFilter] = useState<PreEarningsFilter>("all");
   const [preMeta, setPreMeta] = useState<{
     asOf: string;
     scannedSymbols: number;
@@ -576,6 +673,20 @@ export function SpotterApp() {
 
   type IbkrStatusPayload = { enabled: boolean; authenticated: boolean; gatewayUrl: string; error?: string };
   const [ibkrStatus, setIbkrStatus] = useState<IbkrStatusPayload | "loading" | null>("loading");
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setWatchlist(loadWatchlist());
+      setWatchlistReady(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (watchlistReady) {
+      saveWatchlist(watchlist);
+    }
+  }, [watchlist, watchlistReady]);
 
   useEffect(() => {
     fetch("/api/ibkr-status")
@@ -656,6 +767,10 @@ export function SpotterApp() {
 
         if (!cancelled) {
           setData(payload);
+          if (!silent) {
+            setForwardSortConfig(DEFAULT_FORWARD_SORT);
+            setForwardFilters({ viableOnly: true, tradeClass: "all" });
+          }
           if (payload.isStale) {
             silentRetryDelayMs = 4_000;
             scheduleSilentRefresh(silentRetryDelayMs);
@@ -689,6 +804,87 @@ export function SpotterApp() {
       controller.abort();
     };
   }, [symbol]);
+
+  useEffect(() => {
+    if (!watchlistReady || activeTab !== "forward" || watchlist.length === 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    void Promise.all(
+      watchlist.map(async (watchSymbol) => {
+        const response = await fetchWithTimeout(
+          "/api/forward-vol",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ symbol: watchSymbol }),
+            signal: controller.signal,
+          },
+          FORWARD_VOL_REQUEST_TIMEOUT_MS,
+        );
+        const payload = (await response.json()) as ForwardVolResponse | { error: string };
+        if (!response.ok || "error" in payload) {
+          throw new Error("error" in payload ? payload.error : `Failed to load ${watchSymbol}.`);
+        }
+        const bestRow = [...payload.rows].sort(
+          (left, right) =>
+            (right.adjustedForwardVolEdge ?? Number.NEGATIVE_INFINITY) -
+            (left.adjustedForwardVolEdge ?? Number.NEGATIVE_INFINITY),
+        )[0];
+        if (!bestRow) {
+          return null;
+        }
+        const rankedRow: RankedForwardVolRow = {
+          ...bestRow,
+          symbol: watchSymbol,
+          companyName: tickers.find((ticker) => ticker.symbol === watchSymbol)?.name ?? watchSymbol,
+          rankingReason: null,
+        };
+        return rankedRow;
+      }),
+    )
+      .then((rows) => setWatchForwardRows(rows.filter((row): row is NonNullable<typeof row> => row !== null)))
+      .catch((err) => {
+        if (!(err instanceof Error && err.name === "AbortError")) {
+          setWatchForwardError(err instanceof Error ? err.message : "Failed to load watchlist.");
+        }
+      });
+
+    return () => controller.abort();
+  }, [activeTab, tickers, watchlist, watchlistReady]);
+
+  useEffect(() => {
+    if (!watchlistReady || activeTab !== "preearnings" || watchlist.length === 0) {
+      return;
+    }
+
+    const controller = new AbortController();
+    void fetchWithTimeout(
+      "/api/pre-earnings-viable",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: watchlist }),
+        signal: controller.signal,
+      },
+      FORWARD_VOL_REQUEST_TIMEOUT_MS,
+    )
+      .then(async (response) => {
+        const payload = (await response.json()) as TopPreEarningsResponse | { error: string };
+        if (!response.ok || "error" in payload) {
+          throw new Error("error" in payload ? payload.error : "Failed to load pre-earnings watchlist.");
+        }
+        setWatchPreRows(payload.rows);
+      })
+      .catch((err) => {
+        if (!(err instanceof Error && err.name === "AbortError")) {
+          setWatchPreError(err instanceof Error ? err.message : "Failed to load pre-earnings watchlist.");
+        }
+      });
+
+    return () => controller.abort();
+  }, [activeTab, watchlist, watchlistReady]);
 
   useEffect(() => {
     if (activeTab !== "forward" || !topScanMeta?.isWarming) {
@@ -733,10 +929,57 @@ export function SpotterApp() {
   const hasUpcomingRows = useMemo(() => upcomingRows.length > 0, [upcomingRows.length]);
   const viableForwardRows = useMemo(() => data?.rows.filter((row) => row.isViable) ?? [], [data]);
   const rejectedForwardRows = useMemo(() => data?.rows.filter((row) => !row.isViable) ?? [], [data]);
-  const visibleForwardRows = forwardSubtab === "viable" ? viableForwardRows : rejectedForwardRows;
   const viableTopRows = useMemo(() => topRows.filter((row) => row.isViable), [topRows]);
   const rejectedTopRows = useMemo(() => topRows.filter((row) => !row.isViable), [topRows]);
-  const visibleTopRows = marketForwardSubtab === "viable" ? viableTopRows : rejectedTopRows;
+  const visibleForwardRows = useMemo(() => {
+    const filtered = (data?.rows ?? []).filter(
+      (row) =>
+        (!forwardFilters.viableOnly || row.isViable) &&
+        (forwardFilters.tradeClass === "all" || row.tradeClass === forwardFilters.tradeClass),
+    );
+    return sortRows(filtered, forwardSortConfig);
+  }, [data, forwardFilters, forwardSortConfig]);
+  const visibleTopRows = useMemo(() => {
+    const filtered = topRows.filter(
+      (row) =>
+        (!topForwardFilters.viableOnly || row.isViable) &&
+        (topForwardFilters.tradeClass === "all" || row.tradeClass === topForwardFilters.tradeClass),
+    );
+    return sortRows(filtered, topForwardSortConfig);
+  }, [topForwardFilters, topForwardSortConfig, topRows]);
+  const visiblePreRows = useMemo(() => {
+    const filtered = preRows.filter((row) => {
+      if (preFilter === "recommended") {
+        return row.verdict === "recommended";
+      }
+      if (preFilter === "consider-plus") {
+        return row.verdict === "recommended" || row.verdict === "consider";
+      }
+      return true;
+    });
+    return sortRows(filtered, preSortConfig);
+  }, [preFilter, preRows, preSortConfig]);
+
+  function toggleWatchlistSymbol(rowSymbol: string): void {
+    const normalized = rowSymbol.trim().toUpperCase();
+    if (watchlist.includes(normalized)) {
+      setWatchForwardRows((rows) => rows.filter((row) => row.symbol !== normalized));
+      setWatchPreRows((rows) => rows.filter((row) => row.symbol !== normalized));
+    }
+    setWatchlist((current) =>
+      current.includes(normalized)
+        ? current.filter((item) => item !== normalized)
+        : [...current, normalized].slice(0, 30),
+    );
+  }
+
+  function clearWatchlist(): void {
+    setWatchlist([]);
+    setWatchForwardRows([]);
+    setWatchPreRows([]);
+    setWatchForwardError(null);
+    setWatchPreError(null);
+  }
 
   async function ensureForwardTradeAnalytics(row: ForwardVolRow, rowSymbol: string): Promise<void> {
     const rowKey = buildForwardTradeRowKey({
@@ -825,6 +1068,8 @@ export function SpotterApp() {
       setTopRowsLoading(true);
       setTopError(null);
       setExpandedTopRowKey(null);
+      setTopForwardSortConfig(DEFAULT_TOP_FORWARD_SORT);
+      setTopForwardFilters({ viableOnly: true, tradeClass: "all" });
     }
 
     try {
@@ -869,6 +1114,8 @@ export function SpotterApp() {
     if (!silent) {
       setPreRowsLoading(true);
       setPreError(null);
+      setPreSortConfig(DEFAULT_PRE_EARNINGS_SORT);
+      setPreFilter("all");
     }
 
     try {
@@ -1072,6 +1319,56 @@ export function SpotterApp() {
       <div className="workspace">
         {activeTab === "forward" ? (
           <>
+            {watchlist.length > 0 ? (
+              <section className="panel watchlist-panel">
+                <div className="watchlist-header">
+                  <div>
+                    <p className="eyebrow">Saved symbols</p>
+                    <h2>Watchlist</h2>
+                  </div>
+                  <button type="button" className="button-secondary button-compact" onClick={clearWatchlist}>
+                    Clear watchlist
+                  </button>
+                </div>
+                {watchForwardError ? <p className="error">{watchForwardError}</p> : null}
+                {watchForwardRows.length > 0 ? (
+                  <div className="table-wrap">
+                    <table className="watchlist-table">
+                      <thead>
+                        <tr>
+                          <th>Watch</th>
+                          <th>Symbol</th>
+                          <th>Company</th>
+                          <th>Trade Class</th>
+                          <th>Adj Edge</th>
+                          <th>Forward Vol</th>
+                          <th>Next Earnings</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {watchForwardRows.map((row) => (
+                          <tr key={row.symbol} className={row.isViable ? "row-viable" : "row-not-viable"}>
+                            <td>
+                              <WatchlistButton
+                                active
+                                symbol={row.symbol}
+                                onClick={() => toggleWatchlistSymbol(row.symbol)}
+                              />
+                            </td>
+                            <td className="cell-emphasis">{row.symbol}</td>
+                            <td>{row.companyName}</td>
+                            <td>{row.tradeClass ?? "—"}</td>
+                            <td>{asPct(row.adjustedForwardVolEdge)}</td>
+                            <td>{asPct(row.forwardVol)}</td>
+                            <td>{row.nextEarningsDate ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
             <section className="panel">
               <div className="section-header">
                 <div>
@@ -1150,22 +1447,43 @@ export function SpotterApp() {
                         <h3>{data.symbol} trade results</h3>
                         <p>Use Details to inspect the risk profile for any calculable row.</p>
                       </div>
-                      <div className="segmented-control" aria-label="Filter forward-vol results">
+                      <div className="filter-chips" aria-label="Filter forward-vol results">
                         <button
                           type="button"
-                          className={forwardSubtab === "viable" ? "is-active" : ""}
-                          onClick={() => setForwardSubtab("viable")}
-                          aria-pressed={forwardSubtab === "viable"}
+                          className={forwardFilters.viableOnly ? "chip chip-active" : "chip"}
+                          onClick={() =>
+                            setForwardFilters((current) => ({ ...current, viableOnly: !current.viableOnly }))
+                          }
+                          aria-pressed={forwardFilters.viableOnly}
                         >
-                          Candidates <span>{viableForwardRows.length}</span>
+                          Viable only
                         </button>
                         <button
                           type="button"
-                          className={forwardSubtab === "rejected" ? "is-active" : ""}
-                          onClick={() => setForwardSubtab("rejected")}
-                          aria-pressed={forwardSubtab === "rejected"}
+                          className={forwardFilters.tradeClass === "standard" ? "chip chip-active" : "chip"}
+                          onClick={() =>
+                            setForwardFilters((current) => ({
+                              ...current,
+                              tradeClass: current.tradeClass === "standard" ? "all" : "standard",
+                            }))
+                          }
+                          aria-pressed={forwardFilters.tradeClass === "standard"}
                         >
-                          Rejected <span>{rejectedForwardRows.length}</span>
+                          Standard trades
+                        </button>
+                        <button
+                          type="button"
+                          className={forwardFilters.tradeClass === "earnings-exposed" ? "chip chip-active" : "chip"}
+                          onClick={() =>
+                            setForwardFilters((current) => ({
+                              ...current,
+                              tradeClass:
+                                current.tradeClass === "earnings-exposed" ? "all" : "earnings-exposed",
+                            }))
+                          }
+                          aria-pressed={forwardFilters.tradeClass === "earnings-exposed"}
+                        >
+                          Earnings-exposed
                         </button>
                       </div>
                     </div>
@@ -1175,29 +1493,60 @@ export function SpotterApp() {
                         <table>
                           <thead>
                             <tr>
+                              <th>Watch</th>
                               <th>Pair (target)</th>
                               <th>Details</th>
-                              <th>Trade Class</th>
-                              <th>
+                              <SortableHeader
+                                column="tradeClass"
+                                config={forwardSortConfig}
+                                onSort={(column) => setForwardSortConfig((current) => toggleSort(current, column))}
+                              >
+                                Trade Class
+                              </SortableHeader>
+                              <SortableHeader
+                                column="shortDteActual"
+                                config={forwardSortConfig}
+                                onSort={(column) => setForwardSortConfig((current) => toggleSort(current, column))}
+                              >
                                 Actual <AcronymHint short="DTEs" title="Days To Expiration" />
-                              </th>
+                              </SortableHeader>
                               <th>Next Earnings</th>
                               <th>Strike (ATM)</th>
-                              <th>
+                              <SortableHeader
+                                column="ivShort"
+                                config={forwardSortConfig}
+                                onSort={(column) => setForwardSortConfig((current) => toggleSort(current, column))}
+                              >
                                 Short <AcronymHint short="IV" title="Implied Volatility" />
-                              </th>
-                              <th>
+                              </SortableHeader>
+                              <SortableHeader
+                                column="ivLong"
+                                config={forwardSortConfig}
+                                onSort={(column) => setForwardSortConfig((current) => toggleSort(current, column))}
+                              >
                                 Long <AcronymHint short="IV" title="Implied Volatility" />
-                              </th>
+                              </SortableHeader>
                               <th>
                                 Short <AcronymHint short="OI" title="Open Interest" />
                               </th>
                               <th>
                                 Long <AcronymHint short="OI" title="Open Interest" />
                               </th>
-                              <th>Forward Vol</th>
+                              <SortableHeader
+                                column="forwardVol"
+                                config={forwardSortConfig}
+                                onSort={(column) => setForwardSortConfig((current) => toggleSort(current, column))}
+                              >
+                                Forward Vol
+                              </SortableHeader>
                               <th>Raw Edge</th>
-                              <th>Adj Edge</th>
+                              <SortableHeader
+                                column="adjustedForwardVolEdge"
+                                config={forwardSortConfig}
+                                onSort={(column) => setForwardSortConfig((current) => toggleSort(current, column))}
+                              >
+                                Adj Edge
+                              </SortableHeader>
                               <th>Status</th>
                               <th>Quote Time</th>
                               <th>Notes</th>
@@ -1226,6 +1575,13 @@ export function SpotterApp() {
                               return (
                                 <Fragment key={`${row.shortTargetDte}-${row.longTargetDte}`}>
                                   <tr className={rowClass}>
+                                    <td>
+                                      <WatchlistButton
+                                        active={watchlist.includes(symbol)}
+                                        symbol={symbol}
+                                        onClick={() => toggleWatchlistSymbol(symbol)}
+                                      />
+                                    </td>
                                     <td className="cell-emphasis">
                                       {row.shortTargetDte}/{row.longTargetDte}
                                     </td>
@@ -1260,7 +1616,7 @@ export function SpotterApp() {
                                   </tr>
                                   {isExpanded ? (
                                     <tr className="row-drilldown">
-                                      <td colSpan={16}>
+                                      <td colSpan={17}>
                                         <ForwardTradeDetailsPanel
                                           loading={analyticsLoading}
                                           error={analyticsError}
@@ -1278,13 +1634,9 @@ export function SpotterApp() {
                     ) : (
                       <div className="empty-state empty-state--compact">
                         <strong>
-                          {forwardSubtab === "viable" ? "No candidate trades" : "No rejected trades"}
+                          No matching trades
                         </strong>
-                        <span>
-                          {forwardSubtab === "viable"
-                            ? `${data.symbol} has no pairs above the viability threshold.`
-                            : `Every calculable ${data.symbol} pair passed the viability threshold.`}
-                        </span>
+                        <span>Adjust the filters to include more {data.symbol} results.</span>
                       </div>
                     )}
                   </section>
@@ -1352,22 +1704,43 @@ export function SpotterApp() {
                       <h3>Market scan results</h3>
                       <p>Sorted by forward volatility edge within each result group.</p>
                     </div>
-                    <div className="segmented-control" aria-label="Filter market scan results">
+                    <div className="filter-chips" aria-label="Filter market scan results">
                       <button
                         type="button"
-                        className={marketForwardSubtab === "viable" ? "is-active" : ""}
-                        onClick={() => setMarketForwardSubtab("viable")}
-                        aria-pressed={marketForwardSubtab === "viable"}
+                        className={topForwardFilters.viableOnly ? "chip chip-active" : "chip"}
+                        onClick={() =>
+                          setTopForwardFilters((current) => ({ ...current, viableOnly: !current.viableOnly }))
+                        }
+                        aria-pressed={topForwardFilters.viableOnly}
                       >
-                        Candidates <span>{viableTopRows.length}</span>
+                        Viable only
                       </button>
                       <button
                         type="button"
-                        className={marketForwardSubtab === "rejected" ? "is-active" : ""}
-                        onClick={() => setMarketForwardSubtab("rejected")}
-                        aria-pressed={marketForwardSubtab === "rejected"}
+                        className={topForwardFilters.tradeClass === "standard" ? "chip chip-active" : "chip"}
+                        onClick={() =>
+                          setTopForwardFilters((current) => ({
+                            ...current,
+                            tradeClass: current.tradeClass === "standard" ? "all" : "standard",
+                          }))
+                        }
+                        aria-pressed={topForwardFilters.tradeClass === "standard"}
                       >
-                        Rejected <span>{rejectedTopRows.length}</span>
+                        Standard trades
+                      </button>
+                      <button
+                        type="button"
+                        className={topForwardFilters.tradeClass === "earnings-exposed" ? "chip chip-active" : "chip"}
+                        onClick={() =>
+                          setTopForwardFilters((current) => ({
+                            ...current,
+                            tradeClass:
+                              current.tradeClass === "earnings-exposed" ? "all" : "earnings-exposed",
+                          }))
+                        }
+                        aria-pressed={topForwardFilters.tradeClass === "earnings-exposed"}
+                      >
+                        Earnings-exposed
                       </button>
                     </div>
                   </div>
@@ -1377,32 +1750,84 @@ export function SpotterApp() {
                       <table>
                         <thead>
                           <tr>
-                            <th>Symbol</th>
+                            <th>Watch</th>
+                            <SortableHeader
+                              column="symbol"
+                              config={topForwardSortConfig}
+                              onSort={(column) =>
+                                setTopForwardSortConfig((current) => toggleSort(current, column))
+                              }
+                            >
+                              Symbol
+                            </SortableHeader>
                             <th>Company</th>
                             <th>Pair (target)</th>
                             <th>Details</th>
-                            <th>Trade Class</th>
-                            <th>
+                            <SortableHeader
+                              column="tradeClass"
+                              config={topForwardSortConfig}
+                              onSort={(column) =>
+                                setTopForwardSortConfig((current) => toggleSort(current, column))
+                              }
+                            >
+                              Trade Class
+                            </SortableHeader>
+                            <SortableHeader
+                              column="shortDteActual"
+                              config={topForwardSortConfig}
+                              onSort={(column) =>
+                                setTopForwardSortConfig((current) => toggleSort(current, column))
+                              }
+                            >
                               Actual <AcronymHint short="DTEs" title="Days To Expiration" />
-                            </th>
+                            </SortableHeader>
                             <th>Next Earnings</th>
                             <th>Strike (ATM)</th>
-                            <th>
+                            <SortableHeader
+                              column="ivShort"
+                              config={topForwardSortConfig}
+                              onSort={(column) =>
+                                setTopForwardSortConfig((current) => toggleSort(current, column))
+                              }
+                            >
                               Short <AcronymHint short="IV" title="Implied Volatility" />
-                            </th>
-                            <th>
+                            </SortableHeader>
+                            <SortableHeader
+                              column="ivLong"
+                              config={topForwardSortConfig}
+                              onSort={(column) =>
+                                setTopForwardSortConfig((current) => toggleSort(current, column))
+                              }
+                            >
                               Long <AcronymHint short="IV" title="Implied Volatility" />
-                            </th>
+                            </SortableHeader>
                             <th>
                               Short <AcronymHint short="OI" title="Open Interest" />
                             </th>
                             <th>
                               Long <AcronymHint short="OI" title="Open Interest" />
                             </th>
-                            <th>Forward Vol</th>
+                            <SortableHeader
+                              column="forwardVol"
+                              config={topForwardSortConfig}
+                              onSort={(column) =>
+                                setTopForwardSortConfig((current) => toggleSort(current, column))
+                              }
+                            >
+                              Forward Vol
+                            </SortableHeader>
                             <th>Raw Edge</th>
-                            <th>Adj Edge</th>
+                            <SortableHeader
+                              column="adjustedForwardVolEdge"
+                              config={topForwardSortConfig}
+                              onSort={(column) =>
+                                setTopForwardSortConfig((current) => toggleSort(current, column))
+                              }
+                            >
+                              Adj Edge
+                            </SortableHeader>
                             <th>Status</th>
+                            <th>Why ranked here</th>
                             <th>Quote Time</th>
                             <th>Notes</th>
                           </tr>
@@ -1430,6 +1855,13 @@ export function SpotterApp() {
                             return (
                               <Fragment key={`${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}`}>
                                 <tr className={rowClass}>
+                                  <td>
+                                    <WatchlistButton
+                                      active={watchlist.includes(row.symbol)}
+                                      symbol={row.symbol}
+                                      onClick={() => toggleWatchlistSymbol(row.symbol)}
+                                    />
+                                  </td>
                                   <td className="cell-emphasis">{row.symbol}</td>
                                   <td>{row.companyName}</td>
                                   <td>
@@ -1461,12 +1893,13 @@ export function SpotterApp() {
                                   <td className="viability-cell">
                                     <span className="status-pill">{row.isViable ? "Candidate" : "Rejected"}</span>
                                   </td>
+                                  <td className="ranking-reason">{row.rankingReason ?? "—"}</td>
                                   <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
                                   <td className="notes-cell">{row.notes}</td>
                                 </tr>
                                 {isExpanded ? (
                                   <tr className="row-drilldown">
-                                    <td colSpan={18}>
+                                    <td colSpan={20}>
                                       <ForwardTradeDetailsPanel
                                         loading={analyticsLoading}
                                         error={analyticsError}
@@ -1484,7 +1917,7 @@ export function SpotterApp() {
                   ) : (
                     <div className="empty-state empty-state--compact">
                       <strong>
-                        {marketForwardSubtab === "viable" ? "No candidates yet" : "No rejected rows yet"}
+                        No matching market results
                       </strong>
                       <span>The active market scan has not returned rows for this group.</span>
                     </div>
@@ -1499,6 +1932,59 @@ export function SpotterApp() {
             </section>
           </>
         ) : activeTab === "preearnings" ? (
+          <>
+          {watchlist.length > 0 ? (
+            <section className="panel watchlist-panel">
+              <div className="watchlist-header">
+                <div>
+                  <p className="eyebrow">Saved symbols</p>
+                  <h2>Watchlist</h2>
+                </div>
+                <button type="button" className="button-secondary button-compact" onClick={clearWatchlist}>
+                  Clear watchlist
+                </button>
+              </div>
+              {watchPreError ? <p className="error">{watchPreError}</p> : null}
+              {watchPreRows.length > 0 ? (
+                <div className="table-wrap">
+                  <table className="watchlist-table">
+                    <thead>
+                      <tr>
+                        <th>Watch</th>
+                        <th>Symbol</th>
+                        <th>Company</th>
+                        <th>Verdict</th>
+                        <th>IV30/RV30</th>
+                        <th>TS Slope</th>
+                        <th>Days to Earnings</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {watchPreRows.map((row) => (
+                        <tr key={row.symbol} className={verdictClass(row)}>
+                          <td>
+                            <WatchlistButton
+                              active
+                              symbol={row.symbol}
+                              onClick={() => toggleWatchlistSymbol(row.symbol)}
+                            />
+                          </td>
+                          <td className="cell-emphasis">{row.symbol}</td>
+                          <td>{row.companyName}</td>
+                          <td><span className="status-pill">{row.verdict}</span></td>
+                          <td>{asNumber(row.iv30Rv30)}</td>
+                          <td>{asNumber(row.tsSlope0To45)}</td>
+                          <td>{daysUntilEarnings(row.nextEarningsDate)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : !watchPreError ? (
+                <p className="watchlist-empty">No saved symbol currently has a viable pre-earnings setup.</p>
+              ) : null}
+            </section>
+          ) : null}
           <section className="panel">
             <div className="section-header section-header--action">
               <div>
@@ -1585,26 +2071,87 @@ export function SpotterApp() {
                 </div>
 
                 {preEarningsSubtab === "viable" && hasPreRows ? (
+                  <>
+                  <div className="filter-chips filter-chips--table" aria-label="Filter viable pre-earnings results">
+                    <button
+                      type="button"
+                      className={preFilter === "recommended" ? "chip chip-active" : "chip"}
+                      onClick={() => setPreFilter("recommended")}
+                      aria-pressed={preFilter === "recommended"}
+                    >
+                      Recommended only
+                    </button>
+                    <button
+                      type="button"
+                      className={preFilter === "consider-plus" ? "chip chip-active" : "chip"}
+                      onClick={() => setPreFilter("consider-plus")}
+                      aria-pressed={preFilter === "consider-plus"}
+                    >
+                      Consider+
+                    </button>
+                    <button
+                      type="button"
+                      className={preFilter === "all" ? "chip chip-active" : "chip"}
+                      onClick={() => setPreFilter("all")}
+                      aria-pressed={preFilter === "all"}
+                    >
+                      Show all
+                    </button>
+                  </div>
                   <div className="table-wrap">
                     <table>
                       <thead>
                         <tr>
-                          <th>Symbol</th>
+                          <th>Watch</th>
+                          <SortableHeader
+                            column="symbol"
+                            config={preSortConfig}
+                            onSort={(column) => setPreSortConfig((current) => toggleSort(current, column))}
+                          >
+                            Symbol
+                          </SortableHeader>
                           <th>Company</th>
                           <th>Next Earnings</th>
+                          <SortableHeader
+                            column="nextEarningsDate"
+                            config={preSortConfig}
+                            onSort={(column) => setPreSortConfig((current) => toggleSort(current, column))}
+                          >
+                            Days to Earnings
+                          </SortableHeader>
                           <th>Earnings Session</th>
-                          <th>Verdict</th>
+                          <SortableHeader
+                            column="verdict"
+                            config={preSortConfig}
+                            onSort={(column) => setPreSortConfig((current) => toggleSort(current, column))}
+                          >
+                            Verdict
+                          </SortableHeader>
                           <th>Viable?</th>
-                          <th>Avg Vol 30d</th>
-                          <th>
+                          <SortableHeader
+                            column="avgVolume30"
+                            config={preSortConfig}
+                            onSort={(column) => setPreSortConfig((current) => toggleSort(current, column))}
+                          >
+                            Avg Vol 30d
+                          </SortableHeader>
+                          <SortableHeader
+                            column="iv30Rv30"
+                            config={preSortConfig}
+                            onSort={(column) => setPreSortConfig((current) => toggleSort(current, column))}
+                          >
                             <AcronymHint
                               short="IV30/RV30"
                               title="30-day Implied Volatility divided by 30-day Realized Volatility"
                             />
-                          </th>
-                          <th>
+                          </SortableHeader>
+                          <SortableHeader
+                            column="tsSlope0To45"
+                            config={preSortConfig}
+                            onSort={(column) => setPreSortConfig((current) => toggleSort(current, column))}
+                          >
                             <AcronymHint short="TS" title="Term Structure" /> Slope 0→45
-                          </th>
+                          </SortableHeader>
                           <th>Avg Vol Check</th>
                           <th>
                             <AcronymHint
@@ -1622,11 +2169,19 @@ export function SpotterApp() {
                         </tr>
                       </thead>
                       <tbody>
-                        {preRows.map((row) => (
+                        {visiblePreRows.map((row) => (
                           <tr key={row.symbol} className={verdictClass(row)}>
+                            <td>
+                              <WatchlistButton
+                                active={watchlist.includes(row.symbol)}
+                                symbol={row.symbol}
+                                onClick={() => toggleWatchlistSymbol(row.symbol)}
+                              />
+                            </td>
                             <td className="cell-emphasis">{row.symbol}</td>
                             <td>{row.companyName}</td>
                             <td>{row.nextEarningsDate ?? "—"}</td>
+                            <td>{daysUntilEarnings(row.nextEarningsDate)}</td>
                             <td>{row.earningsSession ?? "—"}</td>
                             <td>
                               <span className="status-pill">{row.verdict}</span>
@@ -1646,6 +2201,7 @@ export function SpotterApp() {
                       </tbody>
                     </table>
                   </div>
+                  </>
                 ) : null}
 
                 {preEarningsSubtab === "viable" && !hasPreRows ? (
@@ -1660,6 +2216,7 @@ export function SpotterApp() {
                     <table>
                       <thead>
                         <tr>
+                          <th>Watch</th>
                           <th>Symbol</th>
                           <th>Company</th>
                           <th>Next Earnings</th>
@@ -1687,6 +2244,13 @@ export function SpotterApp() {
                             key={`${row.symbol}-${row.rejectionStage}-${row.rejectionCategory}`}
                             className="row-invalid"
                           >
+                            <td>
+                              <WatchlistButton
+                                active={watchlist.includes(row.symbol)}
+                                symbol={row.symbol}
+                                onClick={() => toggleWatchlistSymbol(row.symbol)}
+                              />
+                            </td>
                             <td className="cell-emphasis">{row.symbol}</td>
                             <td>{row.companyName}</td>
                             <td>{row.nextEarningsDate ?? "—"}</td>
@@ -1722,6 +2286,7 @@ export function SpotterApp() {
               </div>
             ) : null}
           </section>
+          </>
         ) : (
           <section className="panel">
             <div className="section-header section-header--action">
