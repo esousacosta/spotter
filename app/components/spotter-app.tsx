@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  buildForwardTradeRowKey,
+  isForwardTradeDrilldownEligible,
+  shouldFetchForwardTradeAnalytics,
+  toggleExpandedRow,
+} from "@/lib/forward-trade-drilldown";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import type {
+  ForwardTradeAnalyticsResponse,
   ForwardVolResponse,
+  ForwardVolRow,
   PreEarningsRejectedRow,
   PreEarningsRow,
   RankedForwardVolRow,
@@ -39,6 +47,42 @@ function asInteger(value: number | null): string {
   return Math.round(value).toString();
 }
 
+function asSigned(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "—";
+  }
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value.toFixed(2)}`;
+}
+
+function asCurrency(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "—";
+  }
+  const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${prefix}$${Math.abs(value).toFixed(2)}`;
+}
+
+function asRatio(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "—";
+  }
+  return value.toFixed(2);
+}
+
+function asIsoDateTime(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString().replace(".000Z", "Z");
+}
+
+function AcronymHint({ short, title }: { short: string; title: string }) {
+  return (
+    <abbr title={title} className="acronym-hint">
+      {short}
+    </abbr>
+  );
+}
+
 function verdictClass(row: PreEarningsRow): string {
   if (row.verdict === "recommended") {
     return "row-viable";
@@ -59,6 +103,416 @@ function formatTimeAgo(isoString: string): string {
   const diffHr = Math.floor(diffMin / 60);
   if (diffHr < 24) return `${diffHr}h ${diffMin % 60}m ago`;
   return `${Math.floor(diffHr / 24)}d ago`;
+}
+
+type ChartSeries = "pnl" | "delta" | "gamma" | "theta";
+
+type ChartPoint = {
+  index: number;
+  x: number;
+  y: number;
+  value: number;
+};
+
+const CHART_WIDTH = 540;
+const CHART_HEIGHT = 220;
+const CHART_PADDING_TOP = 14;
+const CHART_PADDING_RIGHT = 12;
+const CHART_PADDING_BOTTOM = 34;
+const CHART_PADDING_LEFT = 46;
+const CHART_PLOT_WIDTH = CHART_WIDTH - CHART_PADDING_LEFT - CHART_PADDING_RIGHT;
+const CHART_PLOT_HEIGHT = CHART_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM;
+
+function normalizeSeries(values: number[]): ChartPoint[] {
+  if (values.length === 0) {
+    return [];
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const xStep = values.length > 1 ? CHART_PLOT_WIDTH / (values.length - 1) : 0;
+  return values
+    .map((value, index) => {
+      const x = CHART_PADDING_LEFT + index * xStep;
+      const y =
+        max === min
+          ? CHART_PADDING_TOP + CHART_PLOT_HEIGHT / 2
+          : CHART_PADDING_TOP + CHART_PLOT_HEIGHT - ((value - min) / (max - min)) * CHART_PLOT_HEIGHT;
+      return { index, x, y, value };
+    });
+}
+
+function formatChartYValue(series: ChartSeries, value: number): string {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+  if (series === "pnl") {
+    return asCurrency(value);
+  }
+  return asSigned(value);
+}
+
+function ForwardTradeDetailsPanel({
+  loading,
+  error,
+  analytics,
+}: {
+  loading: boolean;
+  error: string | null;
+  analytics: ForwardTradeAnalyticsResponse | null;
+}) {
+  const [chartSeries, setChartSeries] = useState<ChartSeries>("pnl");
+  const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
+  const values =
+    chartSeries === "pnl"
+      ? analytics?.chart.yPnl ?? []
+      : chartSeries === "delta"
+        ? analytics?.chart.yDelta ?? []
+        : chartSeries === "gamma"
+          ? analytics?.chart.yGamma ?? []
+          : analytics?.chart.yTheta ?? [];
+  const points = normalizeSeries(values);
+  const polylinePoints = points.map((point) => `${point.x},${point.y}`).join(" ");
+  const isPnlChart = chartSeries === "pnl";
+  const yMin = values.length > 0 ? Math.min(...values) : 0;
+  const yMax = values.length > 0 ? Math.max(...values) : 0;
+  const yMid = (yMin + yMax) / 2;
+  const zeroYRaw =
+    yMax === yMin
+      ? CHART_PADDING_TOP + CHART_PLOT_HEIGHT / 2
+      : CHART_PADDING_TOP + CHART_PLOT_HEIGHT - ((0 - yMin) / (yMax - yMin)) * CHART_PLOT_HEIGHT;
+  const zeroY = Math.min(Math.max(zeroYRaw, CHART_PADDING_TOP), CHART_PADDING_TOP + CHART_PLOT_HEIGHT);
+  const hasPositiveRegion = yMax > 0;
+  const hasNegativeRegion = yMin < 0;
+  const yTickValues = [yMax, yMid, yMin];
+  const xTickIndexes =
+    points.length > 1
+      ? [0, Math.floor((points.length - 1) * 0.25), Math.floor((points.length - 1) * 0.5), Math.floor((points.length - 1) * 0.75), points.length - 1]
+      : points.length === 1
+        ? [0]
+        : [];
+  const uniqueXTickIndexes = [...new Set(xTickIndexes)];
+  const hoveredScenario =
+    hoveredPointIndex !== null && analytics ? analytics.scenarios[hoveredPointIndex] ?? null : null;
+  const hoveredUnderlying =
+    hoveredPointIndex !== null && analytics ? analytics.chart.xUnderlying[hoveredPointIndex] ?? null : null;
+
+  if (loading) {
+    return <p className="muted">Loading trade analytics…</p>;
+  }
+
+  if (error) {
+    return <p className="error">{error}</p>;
+  }
+
+  if (!analytics) {
+    return <p className="muted">No analytics available yet for this trade row.</p>;
+  }
+
+  return (
+    <div className="trade-details-panel">
+      <div className="trade-details-cards">
+        <article>
+          <h4>
+            <AcronymHint short="POP" title="Probability of Profit" />
+          </h4>
+          <p>{asPct(analytics.profile.probabilityOfProfit)}</p>
+        </article>
+        <article>
+          <h4>Break-even</h4>
+          <p>{asNumber(analytics.profile.breakEven)}</p>
+        </article>
+        <article>
+          <h4>Max profit</h4>
+          <p>{asCurrency(analytics.profile.maxProfit)}</p>
+        </article>
+        <article>
+          <h4>Max loss</h4>
+          <p>{asCurrency(analytics.profile.maxLoss)}</p>
+        </article>
+        <article>
+          <h4>Return / risk</h4>
+          <p>{asRatio(analytics.profile.returnRisk)}</p>
+        </article>
+      </div>
+
+      <p className="muted">
+        {analytics.assumptions.pricingModel} • <AcronymHint short="POP" title="Probability of Profit" /> method:{" "}
+        {analytics.assumptions.popMethod} • valuation date:{" "}
+        {asIsoDateTime(analytics.valuationDate)} • r {(analytics.rates.r * 100).toFixed(2)}% • q assumed 0
+      </p>
+
+      <section className="trade-details-greeks">
+        <span>
+          <AcronymHint short="Δ" title="Delta: sensitivity of option price to underlying price changes" />{" "}
+          {asSigned(analytics.greeksNow.delta)}
+        </span>
+        <span>
+          <AcronymHint short="Γ" title="Gamma: rate of change of delta" /> {asSigned(analytics.greeksNow.gamma)}
+        </span>
+        <span>
+          <AcronymHint short="Θ" title="Theta: time decay of option value per day" />{" "}
+          {asSigned(analytics.greeksNow.theta)}
+        </span>
+        <span>
+          <AcronymHint short="Vega" title="Vega: sensitivity to implied volatility changes" />{" "}
+          {asSigned(analytics.greeksNow.vega)}
+        </span>
+        <span>
+          <AcronymHint short="Rho" title="Rho: sensitivity to risk-free interest rate changes" />{" "}
+          {asSigned(analytics.greeksNow.rho)}
+        </span>
+      </section>
+
+      <section className="trade-details-chart">
+        <div className="tabs">
+          <button type="button" className={chartSeries === "pnl" ? "tab-active" : ""} onClick={() => setChartSeries("pnl")}>
+            <AcronymHint short="P&L" title="Profit and Loss" />
+          </button>
+          <button
+            type="button"
+            className={chartSeries === "delta" ? "tab-active" : ""}
+            onClick={() => setChartSeries("delta")}
+          >
+            Delta
+          </button>
+          <button
+            type="button"
+            className={chartSeries === "gamma" ? "tab-active" : ""}
+            onClick={() => setChartSeries("gamma")}
+          >
+            Gamma
+          </button>
+          <button
+            type="button"
+            className={chartSeries === "theta" ? "tab-active" : ""}
+            onClick={() => setChartSeries("theta")}
+          >
+            Theta
+          </button>
+        </div>
+        <svg
+          viewBox="0 0 540 220"
+          role="img"
+          aria-label={`Forward trade ${chartSeries} chart`}
+          onMouseLeave={() => setHoveredPointIndex(null)}
+        >
+          {isPnlChart && hasPositiveRegion && hasNegativeRegion ? (
+            <>
+              <rect
+                x={CHART_PADDING_LEFT}
+                y={CHART_PADDING_TOP}
+                width={CHART_PLOT_WIDTH}
+                height={Math.max(zeroY - CHART_PADDING_TOP, 0)}
+                className="trade-chart-zone-profit"
+              />
+              <rect
+                x={CHART_PADDING_LEFT}
+                y={zeroY}
+                width={CHART_PLOT_WIDTH}
+                height={Math.max(CHART_PADDING_TOP + CHART_PLOT_HEIGHT - zeroY, 0)}
+                className="trade-chart-zone-loss"
+              />
+            </>
+          ) : null}
+          {isPnlChart && hasPositiveRegion && !hasNegativeRegion ? (
+            <rect
+              x={CHART_PADDING_LEFT}
+              y={CHART_PADDING_TOP}
+              width={CHART_PLOT_WIDTH}
+              height={CHART_PLOT_HEIGHT}
+              className="trade-chart-zone-profit"
+            />
+          ) : null}
+          {isPnlChart && hasNegativeRegion && !hasPositiveRegion ? (
+            <rect
+              x={CHART_PADDING_LEFT}
+              y={CHART_PADDING_TOP}
+              width={CHART_PLOT_WIDTH}
+              height={CHART_PLOT_HEIGHT}
+              className="trade-chart-zone-loss"
+            />
+          ) : null}
+          <line
+            x1={CHART_PADDING_LEFT}
+            y1={CHART_PADDING_TOP + CHART_PLOT_HEIGHT}
+            x2={CHART_PADDING_LEFT + CHART_PLOT_WIDTH}
+            y2={CHART_PADDING_TOP + CHART_PLOT_HEIGHT}
+            className="trade-chart-axis"
+          />
+          <line
+            x1={CHART_PADDING_LEFT}
+            y1={CHART_PADDING_TOP}
+            x2={CHART_PADDING_LEFT}
+            y2={CHART_PADDING_TOP + CHART_PLOT_HEIGHT}
+            className="trade-chart-axis"
+          />
+          {yTickValues.map((tickValue) => {
+            const y =
+              yMax === yMin
+                ? CHART_PADDING_TOP + CHART_PLOT_HEIGHT / 2
+                : CHART_PADDING_TOP + CHART_PLOT_HEIGHT - ((tickValue - yMin) / (yMax - yMin)) * CHART_PLOT_HEIGHT;
+            return (
+              <g key={`y-tick-${tickValue}`}>
+                <line
+                  x1={CHART_PADDING_LEFT}
+                  y1={y}
+                  x2={CHART_PADDING_LEFT + CHART_PLOT_WIDTH}
+                  y2={y}
+                  className="trade-chart-gridline"
+                />
+                <text x={4} y={Math.max(CHART_PADDING_TOP + 10, y - 4)} textAnchor="start" className="trade-chart-axis-label">
+                  {formatChartYValue(chartSeries, tickValue)}
+                </text>
+              </g>
+            );
+          })}
+          {uniqueXTickIndexes.map((tickIndex) => {
+            const point = points[tickIndex];
+            const underlying = analytics.chart.xUnderlying[tickIndex] ?? null;
+            if (!point) {
+              return null;
+            }
+            return (
+              <g key={`x-tick-${tickIndex}`}>
+                <line
+                  x1={point.x}
+                  y1={CHART_PADDING_TOP + CHART_PLOT_HEIGHT}
+                  x2={point.x}
+                  y2={CHART_PADDING_TOP + CHART_PLOT_HEIGHT + 5}
+                  className="trade-chart-axis"
+                />
+                <text
+                  x={point.x}
+                  y={CHART_PADDING_TOP + CHART_PLOT_HEIGHT + 16}
+                  textAnchor="middle"
+                  className="trade-chart-axis-label"
+                >
+                  {asNumber(underlying)}
+                </text>
+              </g>
+            );
+          })}
+          {isPnlChart && analytics.profile.breakEven !== null && analytics.chart.xUnderlying.length > 1 ? (() => {
+            const minUnderlying = Math.min(...analytics.chart.xUnderlying);
+            const maxUnderlying = Math.max(...analytics.chart.xUnderlying);
+            const breakEven = analytics.profile.breakEven;
+            if (maxUnderlying <= minUnderlying || breakEven < minUnderlying || breakEven > maxUnderlying) {
+              return null;
+            }
+            const breakEvenX =
+              CHART_PADDING_LEFT + ((breakEven - minUnderlying) / (maxUnderlying - minUnderlying)) * CHART_PLOT_WIDTH;
+            return (
+              <g>
+                <line
+                  x1={breakEvenX}
+                  y1={CHART_PADDING_TOP}
+                  x2={breakEvenX}
+                  y2={CHART_PADDING_TOP + CHART_PLOT_HEIGHT}
+                  className="trade-chart-breakeven-line"
+                />
+                <text x={breakEvenX} y={CHART_PADDING_TOP + 10} textAnchor="middle" className="trade-chart-breakeven-label">
+                  <tspan aria-label="Break-even point">BE</tspan> {asNumber(breakEven)}
+                </text>
+              </g>
+            );
+          })() : null}
+          <polyline points={polylinePoints} fill="none" stroke="#8cb4ff" strokeWidth="2" />
+          {points.map((point) => {
+            const scenario = analytics.scenarios[point.index];
+            if (!scenario) {
+              return null;
+            }
+            const showPnlLabel = chartSeries === "pnl" && (point.index % 2 === 0 || point.index === points.length - 1);
+            const labelYRaw = point.index % 4 < 2 ? point.y - 8 : point.y + 14;
+            const labelY = Math.min(
+              Math.max(labelYRaw, CHART_PADDING_TOP + 10),
+              CHART_PADDING_TOP + CHART_PLOT_HEIGHT - 4,
+            );
+
+            return (
+              <g key={`${chartSeries}-${point.index}`} className="trade-chart-point-group">
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={3.5}
+                  tabIndex={0}
+                  className="trade-chart-point"
+                  onMouseEnter={() => setHoveredPointIndex(point.index)}
+                  onFocus={() => setHoveredPointIndex(point.index)}
+                >
+                  <title>{`Move ${asPct(scenario.movePct)} | Underlying ${asNumber(
+                    analytics.chart.xUnderlying[point.index] ?? null,
+                  )} | P/L ${asCurrency(scenario.pnl)} | Delta ${asSigned(scenario.delta)} | Gamma ${asSigned(
+                    scenario.gamma,
+                  )} | Theta ${asSigned(scenario.theta)}`}</title>
+                </circle>
+                {showPnlLabel ? (
+                  <text x={point.x} y={labelY} textAnchor="middle" className="trade-chart-label">
+                    {asCurrency(point.value)}
+                  </text>
+                ) : null}
+              </g>
+            );
+          })}
+        </svg>
+        {chartSeries === "pnl" ? (
+          <p className="trade-details-chart-info muted">
+            {hoveredScenario
+              ? `Move ${asPct(hoveredScenario.movePct)} • Underlying ${asNumber(hoveredUnderlying)} • P/L ${asCurrency(
+                  hoveredScenario.pnl,
+                )} • Delta ${asSigned(hoveredScenario.delta)} • Gamma ${asSigned(
+                  hoveredScenario.gamma,
+                )} • Theta ${asSigned(hoveredScenario.theta)}`
+              : "Hover a P&L point to inspect move, underlying, P/L, and Greeks."}
+          </p>
+        ) : null}
+      </section>
+
+      <section className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Move</th>
+              <th>Underlying</th>
+              <th>
+                <AcronymHint short="P/L" title="Profit and Loss" />
+              </th>
+              <th>Delta</th>
+              <th>Gamma</th>
+              <th>Theta</th>
+              <th>Vega</th>
+              <th>Rho</th>
+              <th>P(S ≥ price)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {analytics.scenarios.map((scenario) => (
+              <tr key={`${analytics.symbol}-${scenario.underlying}`}>
+                <td>{asPct(scenario.movePct)}</td>
+                <td>{asNumber(scenario.underlying)}</td>
+                <td>{asCurrency(scenario.pnl)}</td>
+                <td>{asSigned(scenario.delta)}</td>
+                <td>{asSigned(scenario.gamma)}</td>
+                <td>{asSigned(scenario.theta)}</td>
+                <td>{asSigned(scenario.vega)}</td>
+                <td>{asSigned(scenario.rho)}</td>
+                <td>{asPct(scenario.popAtOrAboveThisPrice ?? null)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      {analytics.warnings.length > 0 ? (
+        <ul className="trade-details-warnings">
+          {analytics.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 export function SpotterApp() {
@@ -102,6 +556,11 @@ export function SpotterApp() {
   const [topError, setTopError] = useState<string | null>(null);
   const [preError, setPreError] = useState<string | null>(null);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
+  const [expandedForwardRowKey, setExpandedForwardRowKey] = useState<string | null>(null);
+  const [expandedTopRowKey, setExpandedTopRowKey] = useState<string | null>(null);
+  const [analyticsByRowKey, setAnalyticsByRowKey] = useState<Record<string, ForwardTradeAnalyticsResponse>>({});
+  const [analyticsLoadingByRowKey, setAnalyticsLoadingByRowKey] = useState<Record<string, boolean>>({});
+  const [analyticsErrorByRowKey, setAnalyticsErrorByRowKey] = useState<Record<string, string | null>>({});
   const preRefreshInFlight = useRef(false);
   const topRefreshInFlight = useRef(false);
 
@@ -144,6 +603,7 @@ export function SpotterApp() {
     async function loadForwardVol() {
       setRowsLoading(true);
       setError(null);
+      setExpandedForwardRowKey(null);
 
       try {
         const response = await fetchWithTimeout("/api/forward-vol", {
@@ -213,10 +673,93 @@ export function SpotterApp() {
   const hasPreRejectedRows = useMemo(() => preRejectedRows.length > 0, [preRejectedRows.length]);
   const hasUpcomingRows = useMemo(() => upcomingRows.length > 0, [upcomingRows.length]);
 
+  async function ensureForwardTradeAnalytics(row: ForwardVolRow, rowSymbol: string): Promise<void> {
+    const rowKey = buildForwardTradeRowKey({
+      symbol: rowSymbol,
+      shortExpiry: row.shortExpiry,
+      longExpiry: row.longExpiry,
+      selectedStrike: row.selectedStrike,
+    });
+    if (!rowKey || !isForwardTradeDrilldownEligible(row)) {
+      return;
+    }
+    if (!shouldFetchForwardTradeAnalytics(rowKey, analyticsByRowKey, analyticsLoadingByRowKey)) {
+      return;
+    }
+
+    setAnalyticsLoadingByRowKey((current) => ({ ...current, [rowKey]: true }));
+    setAnalyticsErrorByRowKey((current) => ({ ...current, [rowKey]: null }));
+
+    try {
+      const response = await fetchWithTimeout(
+        "/api/forward-trade-analytics",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            symbol: rowSymbol,
+            shortExpiry: row.shortExpiry,
+            longExpiry: row.longExpiry,
+            strike: row.selectedStrike,
+          }),
+        },
+        UI_REQUEST_TIMEOUT_MS,
+      );
+
+      const payload = (await response.json()) as ForwardTradeAnalyticsResponse | { error: string };
+      if (!response.ok || "error" in payload) {
+        const message = "error" in payload ? payload.error : "Forward-trade analytics request failed.";
+        throw new Error(message);
+      }
+
+      setAnalyticsByRowKey((current) => ({ ...current, [rowKey]: payload }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load row analytics.";
+      setAnalyticsErrorByRowKey((current) => ({ ...current, [rowKey]: message }));
+    } finally {
+      setAnalyticsLoadingByRowKey((current) => ({ ...current, [rowKey]: false }));
+    }
+  }
+
+  function onToggleForwardRow(row: ForwardVolRow): void {
+    const rowKey = buildForwardTradeRowKey({
+      symbol,
+      shortExpiry: row.shortExpiry,
+      longExpiry: row.longExpiry,
+      selectedStrike: row.selectedStrike,
+    });
+    if (!rowKey) {
+      return;
+    }
+    const next = toggleExpandedRow(expandedForwardRowKey, rowKey);
+    setExpandedForwardRowKey(next);
+    if (next === rowKey) {
+      void ensureForwardTradeAnalytics(row, symbol);
+    }
+  }
+
+  function onToggleTopRow(row: RankedForwardVolRow): void {
+    const rowKey = buildForwardTradeRowKey({
+      symbol: row.symbol,
+      shortExpiry: row.shortExpiry,
+      longExpiry: row.longExpiry,
+      selectedStrike: row.selectedStrike,
+    });
+    if (!rowKey) {
+      return;
+    }
+    const next = toggleExpandedRow(expandedTopRowKey, rowKey);
+    setExpandedTopRowKey(next);
+    if (next === rowKey) {
+      void ensureForwardTradeAnalytics(row, row.symbol);
+    }
+  }
+
   async function loadTopRows(silent = false) {
     if (!silent) {
       setTopRowsLoading(true);
       setTopError(null);
+      setExpandedTopRowKey(null);
     }
 
     try {
@@ -400,14 +943,25 @@ export function SpotterApp() {
                 <thead>
                   <tr>
                     <th>Pair (target)</th>
+                    <th>Details</th>
                     <th>Trade Class</th>
-                    <th>Actual DTEs</th>
+                    <th>
+                      Actual <AcronymHint short="DTEs" title="Days To Expiration" />
+                    </th>
                     <th>Next Earnings</th>
                     <th>Strike (ATM)</th>
-                    <th>Short IV</th>
-                    <th>Long IV</th>
-                    <th>Short OI</th>
-                    <th>Long OI</th>
+                    <th>
+                      Short <AcronymHint short="IV" title="Implied Volatility" />
+                    </th>
+                    <th>
+                      Long <AcronymHint short="IV" title="Implied Volatility" />
+                    </th>
+                    <th>
+                      Short <AcronymHint short="OI" title="Open Interest" />
+                    </th>
+                    <th>
+                      Long <AcronymHint short="OI" title="Open Interest" />
+                    </th>
                     <th>Forward Vol</th>
                     <th>Raw Edge</th>
                     <th>Adj Edge</th>
@@ -423,28 +977,57 @@ export function SpotterApp() {
                         : row.isViable
                           ? "row-viable"
                           : "row-not-viable";
+                    const rowKey = buildForwardTradeRowKey({
+                      symbol,
+                      shortExpiry: row.shortExpiry,
+                      longExpiry: row.longExpiry,
+                      selectedStrike: row.selectedStrike,
+                    });
+                    const canDrilldown = rowKey !== null && isForwardTradeDrilldownEligible(row);
+                    const isExpanded = rowKey !== null && expandedForwardRowKey === rowKey;
+                    const analytics = rowKey ? analyticsByRowKey[rowKey] ?? null : null;
+                    const analyticsLoading = rowKey ? analyticsLoadingByRowKey[rowKey] ?? false : false;
+                    const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
 
                     return (
-                      <tr key={`${row.shortTargetDte}-${row.longTargetDte}`} className={rowClass}>
-                        <td>
-                          {row.shortTargetDte}/{row.longTargetDte}
-                        </td>
-                        <td>{row.tradeClass ?? "—"}</td>
-                        <td>
-                          {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
-                        </td>
-                        <td>{row.nextEarningsDate ?? "—"}</td>
-                        <td>{asNumber(row.selectedStrike)}</td>
-                        <td>{asPct(row.ivShort)}</td>
-                        <td>{asPct(row.ivLong)}</td>
-                        <td>{asInteger(row.shortOpenInterest)}</td>
-                        <td>{asInteger(row.longOpenInterest)}</td>
-                        <td>{asPct(row.forwardVol)}</td>
-                        <td>{asPct(row.rawForwardVolEdge)}</td>
-                        <td>{asPct(row.adjustedForwardVolEdge)}</td>
-                        <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
-                        <td>{row.notes}</td>
-                      </tr>
+                      <Fragment key={`${row.shortTargetDte}-${row.longTargetDte}`}>
+                        <tr className={rowClass}>
+                          <td>
+                            {row.shortTargetDte}/{row.longTargetDte}
+                          </td>
+                          <td>
+                            <button type="button" onClick={() => onToggleForwardRow(row)} disabled={!canDrilldown}>
+                              {isExpanded ? "Hide" : "Details"}
+                            </button>
+                          </td>
+                          <td>{row.tradeClass ?? "—"}</td>
+                          <td>
+                            {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
+                          </td>
+                          <td>{row.nextEarningsDate ?? "—"}</td>
+                          <td>{asNumber(row.selectedStrike)}</td>
+                          <td>{asPct(row.ivShort)}</td>
+                          <td>{asPct(row.ivLong)}</td>
+                          <td>{asInteger(row.shortOpenInterest)}</td>
+                          <td>{asInteger(row.longOpenInterest)}</td>
+                          <td>{asPct(row.forwardVol)}</td>
+                          <td>{asPct(row.rawForwardVolEdge)}</td>
+                          <td>{asPct(row.adjustedForwardVolEdge)}</td>
+                          <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
+                          <td>{row.notes}</td>
+                        </tr>
+                        {isExpanded ? (
+                          <tr className="row-drilldown">
+                            <td colSpan={16}>
+                              <ForwardTradeDetailsPanel
+                                loading={analyticsLoading}
+                                error={analyticsError}
+                                analytics={analytics}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -469,14 +1052,25 @@ export function SpotterApp() {
                     <th>Symbol</th>
                     <th>Company</th>
                     <th>Pair (target)</th>
+                    <th>Details</th>
                     <th>Trade Class</th>
-                    <th>Actual DTEs</th>
+                    <th>
+                      Actual <AcronymHint short="DTEs" title="Days To Expiration" />
+                    </th>
                     <th>Next Earnings</th>
                     <th>Strike (ATM)</th>
-                    <th>Short IV</th>
-                    <th>Long IV</th>
-                    <th>Short OI</th>
-                    <th>Long OI</th>
+                    <th>
+                      Short <AcronymHint short="IV" title="Implied Volatility" />
+                    </th>
+                    <th>
+                      Long <AcronymHint short="IV" title="Implied Volatility" />
+                    </th>
+                    <th>
+                      Short <AcronymHint short="OI" title="Open Interest" />
+                    </th>
+                    <th>
+                      Long <AcronymHint short="OI" title="Open Interest" />
+                    </th>
                     <th>Forward Vol</th>
                     <th>Raw Edge</th>
                     <th>Adj Edge</th>
@@ -492,30 +1086,59 @@ export function SpotterApp() {
                         : row.isViable
                           ? "row-viable"
                           : "row-not-viable";
+                    const rowKey = buildForwardTradeRowKey({
+                      symbol: row.symbol,
+                      shortExpiry: row.shortExpiry,
+                      longExpiry: row.longExpiry,
+                      selectedStrike: row.selectedStrike,
+                    });
+                    const canDrilldown = rowKey !== null && isForwardTradeDrilldownEligible(row);
+                    const isExpanded = rowKey !== null && expandedTopRowKey === rowKey;
+                    const analytics = rowKey ? analyticsByRowKey[rowKey] ?? null : null;
+                    const analyticsLoading = rowKey ? analyticsLoadingByRowKey[rowKey] ?? false : false;
+                    const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
 
                     return (
-                      <tr key={`${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}`} className={rowClass}>
-                        <td>{row.symbol}</td>
-                        <td>{row.companyName}</td>
-                        <td>
-                          {row.shortTargetDte}/{row.longTargetDte}
-                        </td>
-                        <td>{row.tradeClass ?? "—"}</td>
-                        <td>
-                          {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
-                        </td>
-                        <td>{row.nextEarningsDate ?? "—"}</td>
-                        <td>{asNumber(row.selectedStrike)}</td>
-                        <td>{asPct(row.ivShort)}</td>
-                        <td>{asPct(row.ivLong)}</td>
-                        <td>{asInteger(row.shortOpenInterest)}</td>
-                        <td>{asInteger(row.longOpenInterest)}</td>
-                        <td>{asPct(row.forwardVol)}</td>
-                        <td>{asPct(row.rawForwardVolEdge)}</td>
-                        <td>{asPct(row.adjustedForwardVolEdge)}</td>
-                        <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
-                        <td>{row.notes}</td>
-                      </tr>
+                      <Fragment key={`${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}`}>
+                        <tr className={rowClass}>
+                          <td>{row.symbol}</td>
+                          <td>{row.companyName}</td>
+                          <td>
+                            {row.shortTargetDte}/{row.longTargetDte}
+                          </td>
+                          <td>
+                            <button type="button" onClick={() => onToggleTopRow(row)} disabled={!canDrilldown}>
+                              {isExpanded ? "Hide" : "Details"}
+                            </button>
+                          </td>
+                          <td>{row.tradeClass ?? "—"}</td>
+                          <td>
+                            {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
+                          </td>
+                          <td>{row.nextEarningsDate ?? "—"}</td>
+                          <td>{asNumber(row.selectedStrike)}</td>
+                          <td>{asPct(row.ivShort)}</td>
+                          <td>{asPct(row.ivLong)}</td>
+                          <td>{asInteger(row.shortOpenInterest)}</td>
+                          <td>{asInteger(row.longOpenInterest)}</td>
+                          <td>{asPct(row.forwardVol)}</td>
+                          <td>{asPct(row.rawForwardVolEdge)}</td>
+                          <td>{asPct(row.adjustedForwardVolEdge)}</td>
+                          <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
+                          <td>{row.notes}</td>
+                        </tr>
+                        {isExpanded ? (
+                          <tr className="row-drilldown">
+                            <td colSpan={17}>
+                              <ForwardTradeDetailsPanel
+                                loading={analyticsLoading}
+                                error={analyticsError}
+                                analytics={analytics}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -580,11 +1203,19 @@ export function SpotterApp() {
                     <th>Verdict</th>
                     <th>Viable?</th>
                     <th>Avg Vol 30d</th>
-                    <th>IV30/RV30</th>
-                    <th>TS Slope 0→45</th>
+                    <th>
+                      <AcronymHint short="IV30/RV30" title="30-day Implied Volatility divided by 30-day Realized Volatility" />
+                    </th>
+                    <th>
+                      <AcronymHint short="TS" title="Term Structure" /> Slope 0→45
+                    </th>
                     <th>Avg Vol Check</th>
-                    <th>IV30/RV30 Check</th>
-                    <th>TS Slope Check</th>
+                    <th>
+                      <AcronymHint short="IV30/RV30" title="30-day Implied Volatility divided by 30-day Realized Volatility" /> Check
+                    </th>
+                    <th>
+                      <AcronymHint short="TS" title="Term Structure" /> Slope Check
+                    </th>
                     <th>Expected Move</th>
                     <th>Notes</th>
                   </tr>
@@ -631,8 +1262,12 @@ export function SpotterApp() {
                     <th>Verdict</th>
                     <th>Computed?</th>
                     <th>Avg Vol 30d</th>
-                    <th>IV30/RV30</th>
-                    <th>TS Slope 0→45</th>
+                    <th>
+                      <AcronymHint short="IV30/RV30" title="30-day Implied Volatility divided by 30-day Realized Volatility" />
+                    </th>
+                    <th>
+                      <AcronymHint short="TS" title="Term Structure" /> Slope 0→45
+                    </th>
                     <th>Reason</th>
                   </tr>
                 </thead>

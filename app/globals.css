@@ -66,6 +66,13 @@ label {
   color: var(--text-muted);
 }
 
+.acronym-hint {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: help;
+  border-bottom: none;
+}
+
 select {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -130,4 +137,130 @@ td {
 
 .row-invalid .viability-cell {
   color: var(--red);
+}
+
+.row-drilldown td {
+  background: #0e1628;
+  padding: 0.9rem;
+}
+
+.trade-details-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.trade-details-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.65rem;
+}
+
+.trade-details-cards article {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 0.55rem 0.65rem;
+}
+
+.trade-details-cards h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.trade-details-cards p {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.trade-details-greeks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.trade-details-chart svg {
+  width: 100%;
+  max-width: 560px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0a1324;
+}
+
+.trade-chart-point {
+  fill: #8cb4ff;
+  stroke: #d9e7ff;
+  stroke-width: 1;
+  cursor: pointer;
+}
+
+.trade-chart-axis {
+  stroke: #62728f;
+  stroke-width: 1;
+}
+
+.trade-chart-gridline {
+  stroke: #33415c;
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+.trade-chart-axis-label {
+  fill: #9fb0ce;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.trade-chart-zone-profit {
+  fill: rgba(53, 208, 143, 0.13);
+}
+
+.trade-chart-zone-loss {
+  fill: rgba(255, 125, 125, 0.13);
+}
+
+.trade-chart-breakeven-line {
+  stroke: #ffd26f;
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+}
+
+.trade-chart-breakeven-label {
+  fill: #ffd26f;
+  font-size: 9px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: #0a1324;
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+.trade-chart-point:hover,
+.trade-chart-point:focus {
+  fill: #ffd26f;
+  outline: none;
+}
+
+.trade-chart-label {
+  fill: #d7e3fb;
+  font-size: 9px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: #0a1324;
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+.trade-details-chart-info {
+  margin: 0.25rem 0 0;
+  font-size: 0.86rem;
+}
+
+.trade-details-warnings {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #ffcf8b;
 }

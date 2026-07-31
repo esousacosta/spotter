@@ -52,6 +52,70 @@ export type TopForwardVolResponse = {
   rows: RankedForwardVolRow[];
 };
 
+export type ForwardTradeAnalyticsRequest = {
+  symbol: string;
+  shortExpiry: string;
+  longExpiry: string;
+  strike: number;
+  asOf?: string;
+  maxMovePct?: number;
+  steps?: number;
+  valuationDateMode?: "shortExpiry" | "custom";
+  valuationDate?: string;
+};
+
+export type ForwardTradeScenarioRow = {
+  movePct: number;
+  underlying: number;
+  pnl: number;
+  delta: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  rho: number;
+  popAtOrAboveThisPrice?: number | null;
+};
+
+export type ForwardTradeAnalyticsResponse = {
+  symbol: string;
+  asOf: string;
+  valuationDate: string;
+  spot: number;
+  strike: number;
+  shortExpiry: string;
+  longExpiry: string;
+  rates: { r: number; q: number | null; source: string };
+  assumptions: {
+    pricingModel: "Black-Scholes-European";
+    contracts: number;
+    multiplier: number;
+    popMethod: "lognormal_terminal" | "monte_carlo";
+  };
+  profile: {
+    maxProfit: number | null;
+    maxLoss: number | null;
+    breakEven: number | null;
+    returnRisk: number | null;
+    probabilityOfProfit: number | null;
+  };
+  greeksNow: {
+    delta: number;
+    gamma: number;
+    theta: number;
+    vega: number;
+    rho: number;
+  };
+  scenarios: ForwardTradeScenarioRow[];
+  chart: {
+    xUnderlying: number[];
+    yPnl: number[];
+    yDelta?: number[];
+    yGamma?: number[];
+    yTheta?: number[];
+  };
+  warnings: string[];
+};
+
 export type PreEarningsVerdict = "recommended" | "consider" | "avoid";
 
 export type PreEarningsRow = {
