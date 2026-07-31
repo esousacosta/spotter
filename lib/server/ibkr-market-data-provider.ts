@@ -6,7 +6,7 @@ const OPTION_CHAIN_CACHE_TTL_MS = 60 * 60 * 1_000;
 const CONID_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 const SNAPSHOT_BATCH_SIZE = 100;
 const OPTION_FIELDS = '31,84,85,7283,7308';
-const SPOT_FIELDS = '31,87';
+const SPOT_FIELDS = '31,84,85,87';
 
 // ---------------------------------------------------------------------------
 // Helpers (exported for testing)
@@ -111,11 +111,13 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
   const raw = await getCached(`ibkr-chain:${symbol}`, OPTION_CHAIN_CACHE_TTL_MS, async () => {
     const underlyingConid = await getUnderlyingConid(symbol);
 
-    // Spot price
+    // Spot price — prefer last trade (31), fall back to bid/ask midpoint (84/85).
     const spotSnaps = await ibkrClient.snapshotMarketData([underlyingConid], SPOT_FIELDS);
     const spotSnap = spotSnaps[0];
-    const rawSpot = spotSnap?.['31'] ?? spotSnap?.['87'];
-    const spotPrice = parseSnapshotField(rawSpot);
+    const bid = parseSnapshotField(spotSnap?.['84']);
+    const ask = parseSnapshotField(spotSnap?.['85']);
+    const midpoint = bid != null && ask != null && bid > 0 && ask > 0 ? (bid + ask) / 2 : null;
+    const spotPrice = parseSnapshotField(spotSnap?.['31']) ?? midpoint;
     if (!spotPrice || !Number.isFinite(spotPrice)) {
       throw new Error(`No valid spot price from IBKR for ${symbol}.`);
     }

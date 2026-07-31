@@ -14,17 +14,21 @@ const IBKR_REQUEST_TIMEOUT_MS = 15_000;
 const IBKR_REQUEST_GAP_MS = 10;
 const BRIDGE_RETRY_DELAY_MS = 3_000;
 
-let lastRequestMs = 0;
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function paceRequest(): Promise<void> {
-  const now = Date.now();
-  const wait = lastRequestMs + IBKR_REQUEST_GAP_MS - now;
-  if (wait > 0) await sleep(wait);
-  lastRequestMs = Date.now();
+// Concurrent-safe request pacing: each caller extends the chain by the gap
+// and awaits its own slot. No matter how many workers call paceRequest()
+// simultaneously they are serialised into a queue with IBKR_REQUEST_GAP_MS
+// between each departure. This replaces the racy lastRequestMs approach that
+// broke down when multiple workers read the same value before any could write.
+let requestChain: Promise<void> = Promise.resolve();
+
+function paceRequest(): Promise<void> {
+  const mySlot = requestChain.then(() => sleep(IBKR_REQUEST_GAP_MS));
+  requestChain = mySlot;
+  return mySlot;
 }
 
 /** Fire-and-forget low-level fetch used solely for bridge re-auth — skips all logic above it. */
@@ -36,10 +40,15 @@ async function rawFetch(path: string, options: RequestInit = {}): Promise<Respon
   });
 }
 
+const MAX_503_RETRIES = 4;
+const RETRY_503_DELAY_MS = 2_000;
+
 async function ibkrFetch<T>(
   path: string,
   options: RequestInit = {},
-  retryOn503 = true,
+  // retries503: remaining 503-retry budget; bridgeRetried: prevent infinite bridge-repair loop
+  retries503 = MAX_503_RETRIES,
+  bridgeRetried = false,
 ): Promise<T> {
   await paceRequest();
 
@@ -76,20 +85,21 @@ async function ibkrFetch<T>(
     );
   }
 
-  if (response.status === 503 && retryOn503) {
-    await sleep(1_000);
-    return ibkrFetch<T>(path, options, false);
+  if (response.status === 503 && retries503 > 0) {
+    console.warn(`[ibkr] 503 on ${path} — retrying in ${RETRY_503_DELAY_MS}ms (${retries503} left)`);
+    await sleep(RETRY_503_DELAY_MS);
+    return ibkrFetch<T>(path, options, retries503 - 1, bridgeRetried);
   }
 
   // "no bridge" means the iserver bridge to TWS/IB Gateway isn't established yet.
   // Call re-authenticate to wake it up, wait for it to connect, then retry once.
   if (response.status === 400) {
     const body = await response.text();
-    if (body.includes('no bridge') && retryOn503) {
+    if (body.includes('no bridge') && !bridgeRetried) {
       console.warn('[ibkr] "no bridge" — calling re-authenticate and retrying in 3 s…');
       await rawFetch('/v1/api/iserver/re-authenticate', { method: 'POST' }).catch(() => {});
       await sleep(BRIDGE_RETRY_DELAY_MS);
-      return ibkrFetch<T>(path, options, false);
+      return ibkrFetch<T>(path, options, retries503, true);
     }
     throw new Error(`IBKR request failed (400): ${body.slice(0, 240)}`);
   }
