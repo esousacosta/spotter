@@ -138,8 +138,10 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
       let strikesData: { call: number[]; put: number[] };
       try {
         strikesData = await ibkrClient.getStrikes(underlyingConid, month);
-      } catch {
-        // Month may not have listed options — skip silently.
+      } catch (err) {
+        // Month may not have listed options — skip, but log so real errors are visible.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[ibkr] ${symbol} ${month}: getStrikes failed (${msg}) — skipping month`);
         continue;
       }
       const callStrikes = filterStrikesInRange(strikesData.call ?? [], spotPrice);

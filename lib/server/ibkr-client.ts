@@ -236,10 +236,9 @@ export async function getStrikes(
   month: string,
 ): Promise<IbkrStrikesResponse> {
   await initAccount();
-  return ibkrFetch<IbkrStrikesResponse>('/v1/api/iserver/secdef/strikes', {
-    method: 'POST',
-    body: JSON.stringify({ secType: 'OPT', conid: underlyingConid, month, exchange: 'SMART' }),
-  });
+  return ibkrFetch<IbkrStrikesResponse>(
+    `/v1/api/iserver/secdef/strikes?conid=${encodeURIComponent(underlyingConid)}&sectype=OPT&month=${encodeURIComponent(month)}&exchange=SMART`,
+  );
 }
 
 export type OptionContractEntry = {
