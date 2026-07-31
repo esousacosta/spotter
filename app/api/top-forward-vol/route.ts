@@ -16,8 +16,9 @@ const requestSchema = z.object({
 
 const isLiveMode = process.env.IBKR_ENABLED === 'true';
 // Cboe pacing requires strict sequential processing.
-// IBKR tolerates parallelism, but high fan-out can still trigger secdef 429s.
-const SCAN_CONCURRENCY = isLiveMode ? 2 : 1;
+// IBKR requests are globally paced below the gateway's 10 req/s limit, so a
+// larger worker pool can overlap contract processing without creating bursts.
+const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type TopScanState = {
@@ -32,6 +33,7 @@ type TopScanState = {
 };
 
 let topScanState: TopScanState | null = null;
+let topScanGeneration = 0;
 
 function toResponse(state: TopScanState, topN: number | null): TopForwardVolResponse {
   const sorted = [...state.rows].sort((a, b) => {
@@ -67,7 +69,7 @@ async function runWithConcurrency<T>(
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
 }
 
-async function runTopScan(state: TopScanState): Promise<void> {
+async function runTopScan(state: TopScanState, generation: number): Promise<void> {
   const tickers = await marketDataProvider.getSP500Tickers();
   const targets = normalizeTargets(undefined);
   const earningsMap = await getNextEarningsForSymbols(
@@ -78,6 +80,9 @@ async function runTopScan(state: TopScanState): Promise<void> {
   state.scannedSymbols = tickers.length;
 
   await runWithConcurrency(tickers, SCAN_CONCURRENCY, async (ticker) => {
+    if (generation !== topScanGeneration) {
+      return;
+    }
     try {
       const symbolRows = await computeForwardVolRowsForSymbol(
         ticker.symbol,
@@ -120,13 +125,16 @@ async function ensureTopScan(): Promise<TopScanState> {
     runPromise: null,
   };
   topScanState = state;
+  const generation = topScanGeneration;
 
-  const runPromise = runTopScan(state)
+  const runPromise = runTopScan(state, generation)
     .then(() => {
+      if (generation !== topScanGeneration) return;
       state.status = "complete";
       state.expiresAtMs = Date.now() + SCAN_CACHE_TTL_MS;
     })
     .catch(() => {
+      if (generation !== topScanGeneration) return;
       state.status = "failed";
     });
 
@@ -159,6 +167,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
+  topScanGeneration += 1;
   topScanState = null;
   return NextResponse.json({ ok: true });
 }

@@ -14,6 +14,7 @@ const CACHE_EXTENSION = ".json";
 
 const memoryCache = new Map<string, CacheEntry<unknown>>();
 const inflightLoads = new Map<string, Promise<unknown>>();
+let cacheGeneration = 0;
 
 function toCacheFileName(key: string): string {
   return `${Buffer.from(key).toString("base64url")}${CACHE_EXTENSION}`;
@@ -155,14 +156,24 @@ export async function getCached<T>(
     return inflight as Promise<T>;
   }
 
+  const loadGeneration = cacheGeneration;
+  const clearOwnInflightLoad = (): void => {
+    if (inflightLoads.get(key) === loadPromise) {
+      inflightLoads.delete(key);
+    }
+  };
   const loadPromise = loader()
     .then(async (value) => {
+      if (loadGeneration !== cacheGeneration) {
+        clearOwnInflightLoad();
+        return value;
+      }
       const entry: CacheEntry<unknown> = {
         value,
         expiresAtMs: Date.now() + ttlMs,
       };
       memoryCache.set(key, entry);
-      inflightLoads.delete(key);
+      clearOwnInflightLoad();
 
       try {
         await persistCacheEntry(key, entry);
@@ -174,7 +185,7 @@ export async function getCached<T>(
       return value;
     })
     .catch((error) => {
-      inflightLoads.delete(key);
+      clearOwnInflightLoad();
       throw error;
     });
 
@@ -191,6 +202,7 @@ export async function clearAppCache(): Promise<{
   inflightLoadsCleared: number;
   diskFilesDeleted: number;
 }> {
+  cacheGeneration += 1;
   const memoryEntriesCleared = memoryCache.size;
   const inflightLoadsCleared = inflightLoads.size;
   memoryCache.clear();

@@ -17,8 +17,9 @@ import type {
 
 const isLiveMode = process.env.IBKR_ENABLED === 'true';
 // Cboe requires strict sequential processing with inter-batch pauses to avoid 429s.
-// IBKR supports parallelism, but a smaller pool prevents secdef 429 bursts.
-const SCAN_CONCURRENCY = isLiveMode ? 2 : 1;
+// IBKR requests are globally paced below the gateway's 10 req/s limit, so a
+// larger worker pool can overlap contract processing without creating bursts.
+const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
 const BATCH_SIZE = 5;
 const INTER_BATCH_PAUSE_MS = isLiveMode ? 0 : 5_000;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -45,6 +46,7 @@ type ScanState = {
 type PersistedScanState = Omit<ScanState, "runPromise">;
 
 const scanStates = new Map<number, ScanState>();
+let scanGeneration = 0;
 const LEGACY_MAP_SHAPE_ERROR_FRAGMENT = "chain.callsbyexpiry.keys";
 
 function sleep(ms: number): Promise<void> {
@@ -208,7 +210,11 @@ function loadScanStateFromDisk(scanLimit: number): ScanState | null {
   }
 }
 
-async function processScan(state: ScanState, tickers: Ticker[]): Promise<void> {
+async function processScan(
+  state: ScanState,
+  tickers: Ticker[],
+  generation: number,
+): Promise<void> {
   const now = new Date(state.asOf);
   const todayIso = getMarketDateIso(now);
   const earningsMap = await getNextEarningsForSymbols(
@@ -218,6 +224,9 @@ async function processScan(state: ScanState, tickers: Ticker[]): Promise<void> {
   );
 
   async function processOneTicker(ticker: Ticker, index: number): Promise<void> {
+    if (generation !== scanGeneration) {
+      return;
+    }
     const earningsInfo = earningsMap.get(ticker.symbol) ?? null;
     const nextEarningsDate = earningsInfo?.nextEarningsDate ?? null;
     const daysToEarnings =
@@ -371,9 +380,11 @@ async function startScan(scanLimit: number): Promise<ScanState> {
     expiresAtMs: Date.now() + SCAN_CACHE_TTL_MS,
     runPromise: null,
   };
+  const generation = scanGeneration;
 
-  const runPromise = processScan(state, tickers)
+  const runPromise = processScan(state, tickers, generation)
     .then(async () => {
+      if (generation !== scanGeneration) return;
       state.status = "complete";
       state.expiresAtMs = Date.now() + SCAN_CACHE_TTL_MS;
       try {
@@ -384,6 +395,7 @@ async function startScan(scanLimit: number): Promise<ScanState> {
       }
     })
     .catch((error) => {
+      if (generation !== scanGeneration) return;
       state.status = "failed";
       state.rejectedRows.push({
         symbol: "SCAN",
@@ -435,6 +447,7 @@ export function warmPreEarningsScan(scanLimit?: number): void {
 }
 
 export async function clearPreEarningsScanCache(): Promise<void> {
+  scanGeneration += 1;
   scanStates.clear();
   const filePath = getScanStateFilePath();
   try {

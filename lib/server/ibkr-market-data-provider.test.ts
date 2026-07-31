@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   expiryDateToUnix,
@@ -6,8 +6,15 @@ import {
   parseSnapshotField,
   parseMonthCode,
   isMonthInRange,
+  selectAtmStrikes,
 } from "./ibkr-market-data-provider";
-import { generateOptionMonths } from "./ibkr-client";
+import { generateOptionMonths, toIbkrSymbol } from "./ibkr-client";
+
+describe("toIbkrSymbol", () => {
+  it("converts dotted class-share tickers to IBKR's space format", () => {
+    expect(toIbkrSymbol("brk.b")).toBe("BRK B");
+  });
+});
 
 describe("expiryDateToUnix", () => {
   it("converts YYYYMMDD to Unix timestamp at noon UTC", () => {
@@ -42,8 +49,29 @@ describe("parseSnapshotField", () => {
     expect(parseSnapshotField("$1,234.56")).toBe(1234.56);
   });
 
+  it("parses IBKR percentage strings", () => {
+    expect(parseSnapshotField("30.5%")).toBe(30.5);
+  });
+
   it("returns null for non-numeric string", () => {
     expect(parseSnapshotField("N/A")).toBeNull();
+  });
+
+  describe("selectAtmStrikes", () => {
+    it("selects the closest strikes available for calls and puts across the most months", () => {
+      const months = [
+        { call: [95, 100, 105], put: [95, 100, 105] },
+        { call: [90, 100, 110], put: [90, 100, 110] },
+        { call: [95, 100, 105], put: [95, 100, 105] },
+      ];
+
+      expect(selectAtmStrikes(months, 102, 2)).toEqual([100, 105]);
+    });
+
+    it("ignores strikes that are not available for both rights", () => {
+      const months = [{ call: [100, 105], put: [95, 100] }];
+      expect(selectAtmStrikes(months, 104, 2)).toEqual([100]);
+    });
   });
 
   it("returns null for null/undefined", () => {

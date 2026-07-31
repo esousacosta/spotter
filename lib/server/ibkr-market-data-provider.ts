@@ -2,11 +2,12 @@ import { getCached } from '@/lib/server/cache';
 import * as ibkrClient from '@/lib/server/ibkr-client';
 import type { OptionContract, OptionSnapshot } from '@/lib/server/market-data-provider';
 
-const OPTION_CHAIN_CACHE_TTL_MS = 60 * 60 * 1_000;
-const CONID_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
+const OPTION_CHAIN_CACHE_TTL_MS = 5 * 60 * 1_000;
 const SNAPSHOT_BATCH_SIZE = 100;
-const OPTION_FIELDS = '31,84,85,7283,7308';
-const SPOT_FIELDS = '31,84,85,87';
+const OPTION_CHAIN_WINDOW_DAYS = 112;
+const ATM_STRIKE_COUNT = 1;
+const OPTION_FIELDS = '31,84,86,7633,7638';
+const SPOT_FIELDS = '31,84,86,87';
 
 // ---------------------------------------------------------------------------
 // Helpers (exported for testing)
@@ -49,7 +50,7 @@ export function expiryDateToUnix(dateStr: string): number {
 export function parseSnapshotField(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value !== 'string') return null;
-  const cleaned = value.replace(/[$,]/g, '').trim();
+  const cleaned = value.replace(/[$,%]/g, '').trim();
   if (!cleaned) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
@@ -60,6 +61,31 @@ export function filterStrikesInRange(strikes: number[], spot: number): number[] 
   const low = spot * 0.7;
   const high = spot * 1.3;
   return strikes.filter((s) => s >= low && s <= high);
+}
+
+export function selectAtmStrikes(
+  months: Array<{ call: number[]; put: number[] }>,
+  spot: number,
+  limit = ATM_STRIKE_COUNT,
+): number[] {
+  const coverage = new Map<number, number>();
+  for (const month of months) {
+    const putStrikes = new Set(month.put.filter(Number.isFinite));
+    const commonStrikes = new Set(
+      month.call.filter((strike) => Number.isFinite(strike) && putStrikes.has(strike)),
+    );
+    for (const strike of commonStrikes) {
+      coverage.set(strike, (coverage.get(strike) ?? 0) + 1);
+    }
+  }
+
+  return [...coverage.entries()]
+    .sort(
+      ([strikeA, coverageA], [strikeB, coverageB]) =>
+        coverageB - coverageA || Math.abs(strikeA - spot) - Math.abs(strikeB - spot),
+    )
+    .slice(0, limit)
+    .map(([strike]) => strike);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,100 +127,120 @@ type IbkrChain = {
   quoteTime: string | null;
 };
 
-async function getUnderlyingConid(symbol: string): Promise<string> {
-  return getCached(`ibkr-conid:${symbol}`, CONID_CACHE_TTL_MS, () =>
-    ibkrClient.searchConid(symbol),
-  );
-}
-
 async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
-  const raw = await getCached(`ibkr-chain:${symbol}`, OPTION_CHAIN_CACHE_TTL_MS, async () => {
-    const underlyingConid = await getUnderlyingConid(symbol);
+  const raw = await getCached(`ibkr-chain-v5:${symbol}`, OPTION_CHAIN_CACHE_TTL_MS, async () => {
+    const loadStartedAt = Date.now();
+    // This search is a required IBKR derivative pre-flight and must run once
+    // per fresh chain load, even if the underlying conid is already known.
+    const underlying = await ibkrClient.searchUnderlying(symbol);
+    const underlyingConid = underlying.conid;
+    const searchCompletedAt = Date.now();
 
-    // Spot price — prefer last trade (31), fall back to bid/ask midpoint (84/85).
-    const spotSnaps = await ibkrClient.snapshotMarketData([underlyingConid], SPOT_FIELDS);
+    const now = Date.now();
+    const end = now + OPTION_CHAIN_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+    const listedMonths =
+      underlying.optionMonths.length > 0
+        ? underlying.optionMonths
+        : ibkrClient.generateOptionMonths(now, end);
+    const earliestUsableExpiry = now + 24 * 60 * 60 * 1_000;
+    const relevantMonths = listedMonths.filter((month) =>
+      isMonthInRange(month, earliestUsableExpiry, end),
+    );
+    if (relevantMonths.length === 0) {
+      throw new Error(
+        `No option months within ${OPTION_CHAIN_WINDOW_DAYS} days found for ${symbol}.`,
+      );
+    }
+
+    // Spot and strike discovery are independent after the required search
+    // pre-flight, so perform them concurrently.
+    const strikeDiscoveryMonth = relevantMonths[relevantMonths.length - 1];
+    const [spotSnaps, strikes] = await Promise.all([
+      ibkrClient.withMarketDataSession(() =>
+        ibkrClient.snapshotMarketData([underlyingConid], SPOT_FIELDS, [], `${symbol} spot`),
+      ),
+      ibkrClient.getStrikes(underlyingConid, strikeDiscoveryMonth),
+    ]);
     const spotSnap = spotSnaps[0];
     const bid = parseSnapshotField(spotSnap?.['84']);
-    const ask = parseSnapshotField(spotSnap?.['85']);
+    const ask = parseSnapshotField(spotSnap?.['86']);
     const midpoint = bid != null && ask != null && bid > 0 && ask > 0 ? (bid + ask) / 2 : null;
     const spotPrice = parseSnapshotField(spotSnap?.['31']) ?? midpoint;
     if (!spotPrice || !Number.isFinite(spotPrice)) {
       throw new Error(`No valid spot price from IBKR for ${symbol}.`);
     }
+    const discoveryCompletedAt = Date.now();
 
-    // Available months in the next 90 days — generated locally, no API call needed.
-    const now = Date.now();
-    const end = now + 90 * 24 * 60 * 60 * 1_000;
-    const relevantMonths = ibkrClient.generateOptionMonths(now, end);
-    if (relevantMonths.length === 0) {
-      throw new Error(`No option months within 90 days found for ${symbol}.`);
+    const strikeCandidates = selectAtmStrikes([strikes], spotPrice, 2);
+    if (strikeCandidates.length === 0) {
+      throw new Error(`No shared near-ATM call/put strikes found for ${symbol}.`);
+    }
+    const selectedStrikes = strikeCandidates.slice(0, 1);
+
+    async function loadContracts(strikesToLoad: number[]) {
+      return Promise.all(
+        relevantMonths.flatMap((month) =>
+          strikesToLoad.map(async (strike) => {
+            try {
+              return await ibkrClient.getOptionContracts(underlyingConid, month, strike);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              console.warn(
+                `[ibkr] ${symbol} ${month} ${strike}: secdef/info failed (${message})`,
+              );
+              return [];
+            }
+          }),
+        ),
+      );
     }
 
-    // Collect option contract entries for all relevant months / filtered strikes
-    const callEntries: ibkrClient.OptionContractEntry[] = [];
-    const putEntries: ibkrClient.OptionContractEntry[] = [];
-    let successfulStrikesMonths = 0;
-    let saw429OnStrikes = false;
-    let firstStrikesError: string | null = null;
-
-    for (const month of relevantMonths) {
-      let strikesData: { call: number[]; put: number[] };
-      try {
-        strikesData = await ibkrClient.getStrikes(underlyingConid, month);
-      } catch (err) {
-        // Month may not have listed options — skip, but log so real errors are visible.
-        const msg = err instanceof Error ? err.message : String(err);
-        if (firstStrikesError === null) firstStrikesError = msg;
-        if (msg.includes('(429)')) saw429OnStrikes = true;
-        console.warn(`[ibkr] ${symbol} ${month}: getStrikes failed (${msg}) — skipping month`);
-        continue;
-      }
-      successfulStrikesMonths += 1;
-      const callStrikes = filterStrikesInRange(strikesData.call ?? [], spotPrice);
-      const putStrikes = filterStrikesInRange(strikesData.put ?? [], spotPrice);
-
-      for (const strike of callStrikes) {
-        const entries = await ibkrClient.getOptionConids(underlyingConid, month, 'C', strike);
-        callEntries.push(...entries);
-      }
-      for (const strike of putStrikes) {
-        const entries = await ibkrClient.getOptionConids(underlyingConid, month, 'P', strike);
-        putEntries.push(...entries);
-      }
-    }
+    const contractGroups = await loadContracts(selectedStrikes);
+    const allEntries = contractGroups.flat().filter((entry) => {
+      const expiryMs = expiryDateToUnix(entry.expiry) * 1_000;
+      return expiryMs >= now && expiryMs <= end;
+    });
+    const callEntries = allEntries.filter((entry) => entry.right === 'C');
+    const putEntries = allEntries.filter((entry) => entry.right === 'P');
 
     if (callEntries.length === 0) {
-      if (successfulStrikesMonths === 0 && saw429OnStrikes) {
-        throw new Error(`IBKR rate-limited secdef/strikes for ${symbol}; try again in a few seconds.`);
-      }
-      if (successfulStrikesMonths === 0 && firstStrikesError) {
-        throw new Error(
-          `No option contracts loaded for ${symbol} because secdef/strikes failed for all months: ${firstStrikesError}`,
-        );
-      }
-      throw new Error(`No call option contracts found for ${symbol} within strike range.`);
+      throw new Error(`No near-ATM call option contracts found for ${symbol}.`);
+    }
+    const contractsCompletedAt = Date.now();
+
+    let allConids = [...new Set(allEntries.map((entry) => entry.conid))];
+    const snapshotMap = new Map<
+      string,
+      { bid: number | null; ask: number | null; iv: number | null; oi: number | null }
+    >();
+
+    async function loadSnapshots(entries: ibkrClient.OptionContractEntry[]): Promise<void> {
+      const conids = [...new Set(entries.map((entry) => entry.conid))];
+      await ibkrClient.withMarketDataSession(async () => {
+        for (let i = 0; i < conids.length; i += SNAPSHOT_BATCH_SIZE) {
+          const batch = conids.slice(i, i + SNAPSHOT_BATCH_SIZE);
+          const snaps = await ibkrClient.snapshotMarketData(
+            batch,
+            OPTION_FIELDS,
+            ['7633'],
+            `${symbol} options`,
+          );
+          for (const snap of snaps) {
+            const conid = String(snap['conid'] ?? '');
+            if (!conid) continue;
+            snapshotMap.set(conid, {
+              bid: parseSnapshotField(snap['84']),
+              ask: parseSnapshotField(snap['86']),
+              iv: parseSnapshotField(snap['7633']),
+              oi: parseSnapshotField(snap['7638']),
+            });
+          }
+        }
+      });
     }
 
-    // Batch market data snapshots (max SNAPSHOT_BATCH_SIZE conids per call)
-    const allConids = [...new Set([...callEntries, ...putEntries].map((e) => e.conid))];
-    const snapshotMap = new Map<string, { bid: number | null; ask: number | null; iv: number | null; oi: number | null }>();
+    await loadSnapshots(allEntries);
 
-    for (let i = 0; i < allConids.length; i += SNAPSHOT_BATCH_SIZE) {
-      const batch = allConids.slice(i, i + SNAPSHOT_BATCH_SIZE);
-      const snaps = await ibkrClient.snapshotMarketData(batch, OPTION_FIELDS);
-      for (const snap of snaps) {
-        const conid = String(snap['conid'] ?? '');
-        if (!conid) continue;
-        snapshotMap.set(conid, {
-          bid: parseSnapshotField(snap['84']),
-          ask: parseSnapshotField(snap['85']),
-          iv: parseSnapshotField(snap['7283']),
-          oi: parseSnapshotField(snap['7308']),
-        });
-      }
-    }
-
-    // Build expiry maps
     const callsByExpiry = new Map<number, OptionContract[]>();
     const putsByExpiry = new Map<number, OptionContract[]>();
 
@@ -206,7 +252,6 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
         if (!entry.expiry || entry.expiry.length < 8) continue;
         const snap = snapshotMap.get(entry.conid);
         const ivRaw = snap?.iv;
-        // IV field 7283 is already a percentage (e.g. 24.5 = 24.5% IV) — divide by 100.
         if (ivRaw == null || !Number.isFinite(ivRaw) || ivRaw <= 0) continue;
 
         const expiryUnix = expiryDateToUnix(entry.expiry);
@@ -227,12 +272,44 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
     addToMap(callEntries, callsByExpiry);
     addToMap(putEntries, putsByExpiry);
 
+    const fallbackStrike = strikeCandidates[1];
+    if ((callsByExpiry.size < 2 || putsByExpiry.size < 2) && fallbackStrike != null) {
+      const fallbackEntries = (await loadContracts([fallbackStrike])).flat().filter((entry) => {
+        const expiryMs = expiryDateToUnix(entry.expiry) * 1_000;
+        return expiryMs >= now && expiryMs <= end;
+      });
+      if (fallbackEntries.length > 0) {
+        await loadSnapshots(fallbackEntries);
+        addToMap(
+          fallbackEntries.filter((entry) => entry.right === 'C'),
+          callsByExpiry,
+        );
+        addToMap(
+          fallbackEntries.filter((entry) => entry.right === 'P'),
+          putsByExpiry,
+        );
+        allEntries.push(...fallbackEntries);
+        allConids = [...new Set(allEntries.map((entry) => entry.conid))];
+        selectedStrikes.push(fallbackStrike);
+      }
+    }
+
     if (callsByExpiry.size === 0) {
-      console.warn(
-        `[ibkr] No call options with implied volatility found for ${symbol}. ` +
-          'Snapshots may have returned partial data.',
+      throw new Error(
+        `IBKR returned no strike-level implied volatility for ${symbol}; verify US options market-data permissions.`,
       );
     }
+
+    console.info(
+      `[ibkr] ${symbol} chain loaded in ${Date.now() - loadStartedAt}ms: ` +
+        `${relevantMonths.length} months, ${selectedStrikes.length} ATM strikes, ` +
+        `${allConids.length} contracts, ${callsByExpiry.size} call expiries, ` +
+        `${putsByExpiry.size} put expiries ` +
+        `(search ${searchCompletedAt - loadStartedAt}ms, ` +
+        `spot+strikes ${discoveryCompletedAt - searchCompletedAt}ms, ` +
+        `contracts ${contractsCompletedAt - discoveryCompletedAt}ms, ` +
+        `quotes ${Date.now() - contractsCompletedAt}ms).`,
+    );
 
     return {
       spotPrice,

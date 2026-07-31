@@ -9,9 +9,8 @@
 
 const IBKR_GATEWAY_URL = process.env.IBKR_GATEWAY_URL ?? 'https://localhost:5001';
 const IBKR_REQUEST_TIMEOUT_MS = 15_000;
-// Light pacing for localhost — much lower than the Cboe gap (1 500 ms).
-// Reduce further only if the gateway becomes a bottleneck.
-const IBKR_REQUEST_GAP_MS = 25;
+// CP Gateway sessions are limited to 10 requests/second.
+const IBKR_REQUEST_GAP_MS = 110;
 const BRIDGE_RETRY_DELAY_MS = 3_000;
 
 function sleep(ms: number): Promise<void> {
@@ -180,30 +179,54 @@ async function initAccount(): Promise<string> {
 
 type IbkrContractHit = {
   conid: string | number;
-  symbol: string;
-  description: string;
-  sections?: Array<{ secType: string }>;
+  symbol: string | null;
+  description: string | null;
+  sections?: Array<{ secType: string; months?: string; exchange?: string }>;
 };
 
-export async function searchConid(symbol: string): Promise<string> {
+export type IbkrUnderlying = {
+  conid: string;
+  optionMonths: string[];
+};
+
+export function toIbkrSymbol(symbol: string): string {
+  return symbol.trim().toUpperCase().replaceAll('.', ' ');
+}
+
+export async function searchUnderlying(symbol: string): Promise<IbkrUnderlying> {
   await initAccount();
+  // Do not include the `name` parameter, even as false. IBKR documents that
+  // its presence prevents the required derivative pre-flight from completing.
+  const normalizedSymbol = toIbkrSymbol(symbol);
   const results = await ibkrFetch<IbkrContractHit[]>(
-    `/v1/api/iserver/secdef/search?symbol=${encodeURIComponent(symbol)}&name=false&secType=STK`,
+    `/v1/api/iserver/secdef/search?symbol=${encodeURIComponent(normalizedSymbol)}`,
   );
-  if (!results || results.length === 0) {
+  if (!Array.isArray(results) || results.length === 0) {
     throw new Error(`Symbol ${symbol} not found in IBKR contract search.`);
   }
-  const hit =
-    results.find(
-      (r) =>
-        (r.description === symbol || r.symbol === symbol) &&
-        r.sections?.some((s) => s.secType === 'OPT'),
-    ) ?? results[0];
+  const hit = results.find((result) => {
+    const optionSection = result.sections?.find((section) => section.secType === 'OPT');
+    return (
+      result.symbol?.toUpperCase() === normalizedSymbol &&
+      optionSection !== undefined &&
+      (optionSection.exchange?.split(';').includes('SMART') ?? false)
+    );
+  });
 
   if (!hit?.conid) {
-    throw new Error(`Symbol ${symbol} not found in IBKR contract search.`);
+    throw new Error(`No SMART option contract definition found for ${symbol} in IBKR.`);
   }
-  return String(hit.conid);
+  const optionSection = hit.sections?.find((section) => section.secType === 'OPT');
+  const optionMonths =
+    optionSection?.months
+      ?.split(';')
+      .map((month) => month.trim().toUpperCase())
+      .filter(Boolean) ?? [];
+  return { conid: String(hit.conid), optionMonths };
+}
+
+export async function searchConid(symbol: string): Promise<string> {
+  return (await searchUnderlying(symbol)).conid;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +263,7 @@ type IbkrSecdefEntry = {
   conid?: number;
   maturityDate?: string;
   strike?: number;
+  right?: string;
 };
 
 export async function getStrikes(
@@ -260,24 +284,31 @@ export type OptionContractEntry = {
   month: string;
 };
 
-export async function getOptionConids(
+export async function getOptionContracts(
   underlyingConid: string,
   month: string,
-  right: 'C' | 'P',
   strike: number,
 ): Promise<OptionContractEntry[]> {
   await initAccount();
   const results = await ibkrFetch<IbkrSecdefEntry[]>(
-    `/v1/api/iserver/secdef/info?conid=${encodeURIComponent(underlyingConid)}&sectype=OPT&month=${encodeURIComponent(month)}&right=${right}&strike=${strike}`,
+    `/v1/api/iserver/secdef/info?conid=${encodeURIComponent(underlyingConid)}&exchange=SMART&sectype=OPT&month=${encodeURIComponent(month)}&strike=${strike}`,
   );
   if (!Array.isArray(results)) return [];
   return results
-    .filter((r) => r.conid && r.maturityDate && r.strike != null)
+    .filter(
+      (result): result is IbkrSecdefEntry & { conid: number; maturityDate: string; strike: number; right: 'C' | 'P' } =>
+        Boolean(
+          result.conid &&
+            result.maturityDate &&
+            result.strike != null &&
+            (result.right === 'C' || result.right === 'P'),
+        ),
+    )
     .map((r) => ({
       conid: String(r.conid),
-      right,
-      strike: r.strike ?? strike,
-      expiry: r.maturityDate ?? '',
+      right: r.right,
+      strike: r.strike,
+      expiry: r.maturityDate,
       month,
     }));
 }
@@ -286,40 +317,101 @@ export async function getOptionConids(
 // Market data snapshot
 //
 // IBKR quirk: the first snapshot call subscribes to data; subsequent calls
-// return it. Retry up to 3 times (waiting 600 ms between attempts).
+// return it. Retry up to 5 times (waiting 500 ms between attempts).
 // ---------------------------------------------------------------------------
 
 type IbkrSnapshotEntry = Record<string, string | number | undefined>;
 
-const SNAPSHOT_RETRY_ATTEMPTS = 3;
-const SNAPSHOT_RETRY_DELAY_MS = 600;
+const SNAPSHOT_RETRY_ATTEMPTS = 5;
+const SNAPSHOT_RETRY_DELAY_MS = 500;
 
-function snapshotHasData(entries: IbkrSnapshotEntry[]): boolean {
-  return entries.some(
-    (r) => r['84'] != null || r['31'] != null || r['7283'] != null,
-  );
+function snapshotHasData(
+  entries: IbkrSnapshotEntry[],
+  requiredFields: string[],
+  expectedEntries: number,
+): boolean {
+  if (requiredFields.length > 0) {
+    const populated = entries.filter((entry) =>
+      requiredFields.some((field) => entry[field] != null),
+    ).length;
+    const requiredCount = Math.min(
+      expectedEntries,
+      Math.max(2, Math.min(6, Math.ceil(expectedEntries * 0.6))),
+    );
+    return populated >= requiredCount;
+  }
+  return entries.some((entry) => entry['84'] != null || entry['86'] != null || entry['31'] != null);
+}
+
+function mergeSnapshotEntries(
+  target: Map<string, IbkrSnapshotEntry>,
+  entries: IbkrSnapshotEntry[],
+): void {
+  for (const entry of entries) {
+    const conid = String(entry.conid ?? entry.conidEx ?? '');
+    if (!conid) continue;
+    target.set(conid, { ...(target.get(conid) ?? {}), ...entry });
+  }
 }
 
 export async function snapshotMarketData(
   conids: string[],
   fields: string,
+  requiredFields: string[] = [],
+  label = 'snapshot',
 ): Promise<IbkrSnapshotEntry[]> {
   if (conids.length === 0) return [];
   await initAccount();
 
   const endpoint = `/v1/api/iserver/marketdata/snapshot?conids=${conids.join(',')}&fields=${fields}`;
-  let results = await ibkrFetch<IbkrSnapshotEntry[]>(endpoint);
+  const merged = new Map<string, IbkrSnapshotEntry>();
+  mergeSnapshotEntries(merged, await ibkrFetch<IbkrSnapshotEntry[]>(endpoint));
 
-  for (let i = 0; i < SNAPSHOT_RETRY_ATTEMPTS && !snapshotHasData(results); i += 1) {
+  for (
+    let i = 0;
+    i < SNAPSHOT_RETRY_ATTEMPTS &&
+    !snapshotHasData([...merged.values()], requiredFields, conids.length);
+    i += 1
+  ) {
     await sleep(SNAPSHOT_RETRY_DELAY_MS);
-    results = await ibkrFetch<IbkrSnapshotEntry[]>(endpoint);
+    mergeSnapshotEntries(merged, await ibkrFetch<IbkrSnapshotEntry[]>(endpoint));
   }
 
-  if (!snapshotHasData(results)) {
-    console.warn('[ibkr] Snapshot returned empty fields after retries. Using available data.');
+  const results = [...merged.values()];
+  if (!snapshotHasData(results, requiredFields, conids.length)) {
+    const populated = results.filter((entry) =>
+      requiredFields.some((field) => entry[field] != null),
+    ).length;
+    console.warn(
+      `[ibkr] ${label} populated ${populated}/${conids.length} contracts for fields ` +
+        `${requiredFields.join(',') || fields} after retries.`,
+    );
   }
 
   return results;
+}
+
+let marketDataSessionTail: Promise<void> = Promise.resolve();
+
+export async function withMarketDataSession<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = marketDataSessionTail;
+  let release!: () => void;
+  marketDataSessionTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+
+  try {
+    return await fn();
+  } finally {
+    try {
+      await ibkrFetch('/v1/api/iserver/marketdata/unsubscribeall');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[ibkr] Failed to release market-data streams: ${message}`);
+    }
+    release();
+  }
 }
 
 // ---------------------------------------------------------------------------
