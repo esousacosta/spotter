@@ -433,3 +433,13 @@ export function warmPreEarningsScan(scanLimit?: number): void {
     console.warn(`[pre-earnings] warmup failed: ${message}`);
   });
 }
+
+export async function clearPreEarningsScanCache(): Promise<void> {
+  scanStates.clear();
+  const filePath = getScanStateFilePath();
+  try {
+    await fs.promises.unlink(filePath);
+  } catch {
+    // Ignore if the persisted scan file is missing.
+  }
+}

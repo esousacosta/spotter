@@ -282,6 +282,14 @@ td {
   margin-bottom: 0.35rem;
 }
 
+.header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .quote-source-badge {
   display: inline-flex;
   align-items: center;
@@ -328,4 +336,8 @@ td {
   color: var(--red);
   border-color: #7a2a2a;
   background: #2f1010;
+}
+
+.cache-clear-button {
+  margin-top: 0.5rem;
 }

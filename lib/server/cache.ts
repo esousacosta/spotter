@@ -185,3 +185,39 @@ export async function getCached<T>(
 export function getCacheDirectoryPath(): string {
   return CACHE_DIR;
 }
+
+export async function clearAppCache(): Promise<{
+  memoryEntriesCleared: number;
+  inflightLoadsCleared: number;
+  diskFilesDeleted: number;
+}> {
+  const memoryEntriesCleared = memoryCache.size;
+  const inflightLoadsCleared = inflightLoads.size;
+  memoryCache.clear();
+  inflightLoads.clear();
+
+  let diskFilesDeleted = 0;
+  ensureCacheDir();
+  try {
+    const files = await fs.promises.readdir(CACHE_DIR);
+    for (const file of files) {
+      if (!file.endsWith(CACHE_EXTENSION)) {
+        continue;
+      }
+      try {
+        await fs.promises.unlink(path.join(CACHE_DIR, file));
+        diskFilesDeleted += 1;
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // Ignore disk cleanup failures; in-memory cache has already been cleared.
+  }
+
+  return {
+    memoryEntriesCleared,
+    inflightLoadsCleared,
+    diskFilesDeleted,
+  };
+}
