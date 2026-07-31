@@ -5,17 +5,25 @@ export async function fetchWithTimeout(
   init: RequestInit = {},
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, timeoutController.signal])
+    : timeoutController.signal;
 
   try {
     const response = await fetch(input, {
       ...init,
-      signal: controller.signal,
+      signal,
     });
     return response;
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
+    if (
+      error instanceof Error &&
+      error.name === "AbortError" &&
+      timeoutController.signal.aborted &&
+      !init.signal?.aborted
+    ) {
       throw new Error(`Request timed out after ${timeoutMs}ms.`);
     }
     throw error;
@@ -23,4 +31,3 @@ export async function fetchWithTimeout(
     clearTimeout(timeout);
   }
 }
-

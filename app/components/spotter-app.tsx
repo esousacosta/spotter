@@ -25,6 +25,7 @@ import type {
 
 const DEFAULT_SYMBOL = "AAPL";
 const UI_REQUEST_TIMEOUT_MS = 30_000;
+const FORWARD_VOL_REQUEST_TIMEOUT_MS = 60_000;
 
 function asPct(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
@@ -612,6 +613,8 @@ export function SpotterApp() {
     if (!symbol) {
       return;
     }
+    const controller = new AbortController();
+    let cancelled = false;
 
     async function loadForwardVol() {
       setRowsLoading(true);
@@ -623,7 +626,8 @@ export function SpotterApp() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ symbol }),
-        }, UI_REQUEST_TIMEOUT_MS);
+          signal: controller.signal,
+        }, FORWARD_VOL_REQUEST_TIMEOUT_MS);
 
         const payload = (await response.json()) as ForwardVolResponse | { error: string };
         if (!response.ok || "error" in payload) {
@@ -631,17 +635,28 @@ export function SpotterApp() {
           throw new Error(message);
         }
 
-        setData(payload);
+        if (!cancelled) {
+          setData(payload);
+        }
       } catch (err) {
+        if (cancelled || (err instanceof Error && err.name === "AbortError")) {
+          return;
+        }
         const message = err instanceof Error ? err.message : "Failed to load forward volatility.";
         setError(message);
         setData(null);
       } finally {
-        setRowsLoading(false);
+        if (!cancelled) {
+          setRowsLoading(false);
+        }
       }
     }
 
     void loadForwardVol();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [symbol]);
 
   useEffect(() => {

@@ -7,6 +7,8 @@
 // KNOWN LIMITATION: NODE_TLS_REJECT_UNAUTHORIZED=0 must never be set on a
 // remote server or in any production environment.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 const IBKR_GATEWAY_URL = process.env.IBKR_GATEWAY_URL ?? 'https://localhost:5001';
 const IBKR_REQUEST_TIMEOUT_MS = 15_000;
 // CP Gateway sessions are limited to 10 requests/second.
@@ -391,15 +393,41 @@ export async function snapshotMarketData(
   return results;
 }
 
-let marketDataSessionTail: Promise<void> = Promise.resolve();
+type MarketDataPriority = 'interactive' | 'background';
+
+const marketDataPriority = new AsyncLocalStorage<MarketDataPriority>();
+const interactiveMarketDataQueue: Array<() => void> = [];
+const backgroundMarketDataQueue: Array<() => void> = [];
+let marketDataSessionActive = false;
+
+function acquireMarketDataSession(priority: MarketDataPriority): Promise<void> {
+  if (!marketDataSessionActive) {
+    marketDataSessionActive = true;
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve) => {
+    const queue =
+      priority === 'interactive' ? interactiveMarketDataQueue : backgroundMarketDataQueue;
+    queue.push(resolve);
+  });
+}
+
+function releaseMarketDataSession(): void {
+  const next = interactiveMarketDataQueue.shift() ?? backgroundMarketDataQueue.shift();
+  if (next) {
+    next();
+    return;
+  }
+  marketDataSessionActive = false;
+}
+
+export function withInteractiveIbkrRequest<T>(fn: () => Promise<T>): Promise<T> {
+  return marketDataPriority.run('interactive', fn);
+}
 
 export async function withMarketDataSession<T>(fn: () => Promise<T>): Promise<T> {
-  const previous = marketDataSessionTail;
-  let release!: () => void;
-  marketDataSessionTail = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await previous;
+  await acquireMarketDataSession(marketDataPriority.getStore() ?? 'background');
 
   try {
     return await fn();
@@ -410,7 +438,7 @@ export async function withMarketDataSession<T>(fn: () => Promise<T>): Promise<T>
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`[ibkr] Failed to release market-data streams: ${message}`);
     }
-    release();
+    releaseMarketDataSession();
   }
 }
 
