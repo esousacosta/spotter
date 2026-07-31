@@ -326,6 +326,7 @@ Rejected rows are returned separately in `rejectedRows`.
 - The scan endpoint returns the latest cached snapshot immediately and the UI polls for refreshes while the background scan is still running, so the button does not wait for the full scan to complete.
 - Completed scan snapshots are persisted to disk and reused across server restarts while still fresh.
 - UI-triggered API calls use a request-timeout guard so loading states cannot hang forever if a request stalls.
+- Tickers that fail with rate-limit errors (HTTP 429 / Cloudflare 1015) are retried in later rounds of the same background scan with progressive delays before being marked as data-failed.
 
 ---
 

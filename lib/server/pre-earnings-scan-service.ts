@@ -20,6 +20,8 @@ const BATCH_SIZE = 5;
 const INTER_BATCH_PAUSE_MS = 5_000;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 const PRE_EARNINGS_WINDOW_DAYS = 21;
+const MAX_THROTTLED_SYMBOL_RETRIES = 2;
+const THROTTLED_RETRY_BASE_DELAY_MS = 30_000;
 const SCAN_STATE_FILE = "pre-earnings-scan-result.json";
 
 type ScanStatus = "running" | "complete" | "failed";
@@ -43,6 +45,18 @@ const scanStates = new Map<number, ScanState>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("(429)") || message.includes("rate limit") || message.includes("error 1015");
+}
+
+function throttledRetryDelayMs(retryAttempt: number): number {
+  return Math.min(THROTTLED_RETRY_BASE_DELAY_MS * 2 ** retryAttempt, 120_000);
 }
 
 function buildRejectedRow(
@@ -227,28 +241,62 @@ async function processScan(state: ScanState, tickers: Ticker[]): Promise<void> {
         }),
       );
     } else {
-      try {
-        const result = await computePreEarningsRow(ticker, earningsInfo, now);
-        state.evaluatedSymbols += 1;
-        if (result.outcome === "viable") {
-          state.computedSymbols += 1;
-          state.rows.push(result.row);
-        } else {
-          if (result.row.wasComputed) {
+      let completed = false;
+      for (let retryAttempt = 0; retryAttempt <= MAX_THROTTLED_SYMBOL_RETRIES; retryAttempt += 1) {
+        try {
+          const result = await computePreEarningsRow(ticker, earningsInfo, now);
+          state.evaluatedSymbols += 1;
+          if (result.outcome === "viable") {
             state.computedSymbols += 1;
+            state.rows.push(result.row);
+          } else {
+            if (result.row.wasComputed) {
+              state.computedSymbols += 1;
+            }
+            state.rejectedRows.push(result.row);
           }
-          state.rejectedRows.push(result.row);
+          completed = true;
+          break;
+        } catch (error) {
+          const canRetryThrottle =
+            isRateLimitError(error) && retryAttempt < MAX_THROTTLED_SYMBOL_RETRIES;
+          if (canRetryThrottle) {
+            const delayMs = throttledRetryDelayMs(retryAttempt);
+            console.info(
+              `[pre-earnings] ${ticker.symbol} throttled, retry ${retryAttempt + 1}/${MAX_THROTTLED_SYMBOL_RETRIES} in ${delayMs}ms`,
+            );
+            await sleep(delayMs);
+            continue;
+          }
+
+          state.evaluatedSymbols += 1;
+          const retrySuffix =
+            isRateLimitError(error) && retryAttempt > 0
+              ? ` after ${retryAttempt} retry attempt${retryAttempt === 1 ? "" : "s"}`
+              : "";
+          const rejectionReason =
+            error instanceof Error
+              ? `Market-data request failed${retrySuffix}: ${error.message}`
+              : "The app could not load all required market data for this symbol during the scan.";
+          state.rejectedRows.push(
+            buildFetchFailureRow(
+              ticker,
+              rejectionReason,
+              earningsInfo?.nextEarningsDate ?? null,
+              earningsInfo?.releaseSession ?? null,
+            ),
+          );
+          completed = true;
+          break;
         }
-      } catch (error) {
+      }
+
+      if (!completed) {
         state.evaluatedSymbols += 1;
-        const rejectionReason =
-          error instanceof Error
-            ? `Market-data request failed: ${error.message}`
-            : "The app could not load all required market data for this symbol during the scan.";
         state.rejectedRows.push(
           buildFetchFailureRow(
             ticker,
-            rejectionReason,
+            "Market-data request failed: retry loop ended without completion.",
             earningsInfo?.nextEarningsDate ?? null,
             earningsInfo?.releaseSession ?? null,
           ),
@@ -355,4 +403,3 @@ export function warmPreEarningsScan(scanLimit?: number): void {
     console.warn(`[pre-earnings] warmup failed: ${message}`);
   });
 }
-
