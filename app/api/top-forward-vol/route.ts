@@ -33,22 +33,32 @@ type TopScanState = {
 };
 
 let topScanState: TopScanState | null = null;
+let staleTopScanState: TopScanState | null = null;
 let topScanGeneration = 0;
 
 function toResponse(state: TopScanState, topN: number | null): TopForwardVolResponse {
-  const sorted = [...state.rows].sort((a, b) => {
+  const visibleState =
+    state.status === "running" && staleTopScanState ? staleTopScanState : state;
+  const sorted = [...visibleState.rows].sort((a, b) => {
     const aEdge = a.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
     const bEdge = b.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
     return bEdge - aEdge;
   });
 
   return {
-    asOf: state.asOf,
-    scannedSymbols: state.scannedSymbols,
-    processedSymbols: state.processedSymbols,
-    successfulSymbols: state.successfulSymbols,
+    asOf: visibleState.asOf,
+    scannedSymbols: visibleState.scannedSymbols,
+    processedSymbols: visibleState.processedSymbols,
+    successfulSymbols: visibleState.successfulSymbols,
     isComplete: state.status === "complete",
     isWarming: state.status === "running",
+    isStale: visibleState !== state || sorted.some((row) => row.isStale),
+    warning:
+      visibleState !== state
+        ? "Showing the previous completed scan while a fresh scan runs in the background."
+        : sorted.some((row) => row.isStale)
+          ? "Some results use cached IBKR quotes while live refreshes run in the background."
+          : null,
     rows: topN === null ? sorted : sorted.slice(0, topN),
   };
 }
@@ -112,6 +122,9 @@ async function ensureTopScan(): Promise<TopScanState> {
     if (freshComplete || topScanState.status === "running") {
       return topScanState;
     }
+    if (topScanState.status === "complete") {
+      staleTopScanState = topScanState;
+    }
   }
 
   const state: TopScanState = {
@@ -132,6 +145,7 @@ async function ensureTopScan(): Promise<TopScanState> {
       if (generation !== topScanGeneration) return;
       state.status = "complete";
       state.expiresAtMs = Date.now() + SCAN_CACHE_TTL_MS;
+      staleTopScanState = null;
     })
     .catch(() => {
       if (generation !== topScanGeneration) return;
@@ -169,5 +183,6 @@ export async function POST(request: Request) {
 export async function DELETE() {
   topScanGeneration += 1;
   topScanState = null;
+  staleTopScanState = null;
   return NextResponse.json({ ok: true });
 }

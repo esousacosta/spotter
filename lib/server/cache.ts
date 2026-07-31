@@ -4,10 +4,16 @@ import path from "node:path";
 
 type CacheEntry<T> = {
   expiresAtMs: number;
+  staleUntilMs: number;
   value: T;
 };
 
-const CACHE_FILE_FORMAT_VERSION = 2;
+export type StaleCacheResult<T> = {
+  value: T;
+  isStale: boolean;
+};
+
+const CACHE_FILE_FORMAT_VERSION = 3;
 const DEFAULT_CACHE_DIR = path.join(os.tmpdir(), "forward-vol-spotter-cache");
 const CACHE_DIR = process.env.CACHE_DIR?.trim() || DEFAULT_CACHE_DIR;
 const CACHE_EXTENSION = ".json";
@@ -88,6 +94,7 @@ function loadDiskCacheIntoMemory(): void {
           formatVersion?: number;
           key?: string;
           expiresAtMs?: number;
+          staleUntilMs?: number;
           value?: unknown;
         };
         if (parsed.formatVersion !== CACHE_FILE_FORMAT_VERSION) {
@@ -96,16 +103,19 @@ function loadDiskCacheIntoMemory(): void {
         if (
           typeof parsed.key !== "string" ||
           typeof parsed.expiresAtMs !== "number" ||
-          !Number.isFinite(parsed.expiresAtMs)
+          !Number.isFinite(parsed.expiresAtMs) ||
+          typeof parsed.staleUntilMs !== "number" ||
+          !Number.isFinite(parsed.staleUntilMs)
         ) {
           continue;
         }
-        if (parsed.expiresAtMs <= now) {
+        if (parsed.staleUntilMs <= now) {
           continue;
         }
 
         memoryCache.set(parsed.key, {
           expiresAtMs: parsed.expiresAtMs,
+          staleUntilMs: parsed.staleUntilMs,
           value: parsed.value,
         });
         loadedCount += 1;
@@ -131,6 +141,7 @@ async function persistCacheEntry(key: string, entry: CacheEntry<unknown>): Promi
       formatVersion: CACHE_FILE_FORMAT_VERSION,
       key,
       expiresAtMs: entry.expiresAtMs,
+      staleUntilMs: entry.staleUntilMs,
       value: entry.value,
     },
     cacheJsonReplacer,
@@ -139,23 +150,12 @@ async function persistCacheEntry(key: string, entry: CacheEntry<unknown>): Promi
   await fs.promises.writeFile(filePath, payload, "utf8");
 }
 
-export async function getCached<T>(
+function startCacheLoad<T>(
   key: string,
   ttlMs: number,
+  staleTtlMs: number,
   loader: () => Promise<T>,
 ): Promise<T> {
-  const now = Date.now();
-  const existing = memoryCache.get(key);
-
-  if (existing && existing.expiresAtMs > now) {
-    return existing.value as T;
-  }
-
-  const inflight = inflightLoads.get(key);
-  if (inflight) {
-    return inflight as Promise<T>;
-  }
-
   const loadGeneration = cacheGeneration;
   const clearOwnInflightLoad = (): void => {
     if (inflightLoads.get(key) === loadPromise) {
@@ -171,6 +171,7 @@ export async function getCached<T>(
       const entry: CacheEntry<unknown> = {
         value,
         expiresAtMs: Date.now() + ttlMs,
+        staleUntilMs: Date.now() + ttlMs + staleTtlMs,
       };
       memoryCache.set(key, entry);
       clearOwnInflightLoad();
@@ -191,6 +192,65 @@ export async function getCached<T>(
 
   inflightLoads.set(key, loadPromise);
   return loadPromise;
+}
+
+export async function getCached<T>(
+  key: string,
+  ttlMs: number,
+  loader: () => Promise<T>,
+): Promise<T> {
+  const existing = memoryCache.get(key);
+  if (existing && existing.expiresAtMs > Date.now()) {
+    return existing.value as T;
+  }
+
+  const inflight = inflightLoads.get(key);
+  return inflight ? (inflight as Promise<T>) : startCacheLoad(key, ttlMs, 0, loader);
+}
+
+export async function getCachedStaleWhileRevalidate<T>(
+  key: string,
+  ttlMs: number,
+  staleTtlMs: number,
+  loader: () => Promise<T>,
+): Promise<StaleCacheResult<T>> {
+  const now = Date.now();
+  const existing = memoryCache.get(key);
+  if (existing && existing.expiresAtMs > now) {
+    return { value: existing.value as T, isStale: false };
+  }
+
+  const inflight = inflightLoads.get(key) as Promise<T> | undefined;
+  if (existing && existing.staleUntilMs > now) {
+    if (!inflight) {
+      void startCacheLoad(key, ttlMs, staleTtlMs, loader).catch((error) => {
+        const message = error instanceof Error ? error.message : "unknown refresh error";
+        console.warn(`[cache] stale refresh failed for "${key}": ${message}`);
+      });
+    }
+    return { value: existing.value as T, isStale: true };
+  }
+
+  const value = await (inflight ?? startCacheLoad(key, ttlMs, staleTtlMs, loader));
+  return { value, isStale: false };
+}
+
+export async function deleteCached(key: string): Promise<void> {
+  memoryCache.delete(key);
+  inflightLoads.delete(key);
+  try {
+    await fs.promises.unlink(toCacheFilePath(key));
+  } catch {
+    // Missing cache files require no action.
+  }
+}
+
+export function getCacheStatus(key: string): "fresh" | "stale" | "missing" {
+  const entry = memoryCache.get(key);
+  if (!entry) return "missing";
+  const now = Date.now();
+  if (entry.expiresAtMs > now) return "fresh";
+  return entry.staleUntilMs > now ? "stale" : "missing";
 }
 
 export function getCacheDirectoryPath(): string {

@@ -49,7 +49,16 @@ export type OptionSnapshot = {
   expirations: number[];
   volume: number | null;
   quoteTime: string | null;
+  isStale?: boolean;
+  freshUntil?: string | null;
 };
+
+export function isOptionSnapshotStale(snapshot: OptionSnapshot): boolean {
+  if (snapshot.isStale) return true;
+  if (!snapshot.freshUntil) return false;
+  const freshUntilMs = Date.parse(snapshot.freshUntil);
+  return Number.isFinite(freshUntilMs) && freshUntilMs <= Date.now();
+}
 
 export type HistoricalDailyBar = {
   date: string;
@@ -500,6 +509,7 @@ export const marketDataProvider = {
       expirations,
       volume: chain.volume,
       quoteTime: chain.quoteTime,
+      isStale: false,
     };
   },
 

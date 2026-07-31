@@ -9,9 +9,14 @@ export async function GET() {
   }
 
   try {
-    const { getAuthStatus } = await import("@/lib/server/ibkr-client");
+    const { getAuthStatus, getMarketDataSchedulerMetrics } = await import("@/lib/server/ibkr-client");
     const status = await getAuthStatus();
-    return NextResponse.json({ enabled: true, authenticated: status.authenticated, gatewayUrl });
+    return NextResponse.json({
+      enabled: true,
+      authenticated: status.authenticated,
+      gatewayUrl,
+      scheduler: getMarketDataSchedulerMetrics(),
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to reach IBKR gateway.";

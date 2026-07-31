@@ -30,11 +30,15 @@ export type ForwardVolRow = {
   status: "ok" | "invalid";
   notes: string;
   quoteTime: string | null;
+  isStale?: boolean;
 };
 
 export type ForwardVolResponse = {
   symbol: string;
   asOf: string;
+  quoteAsOf?: string | null;
+  isStale?: boolean;
+  warning?: string | null;
   rows: ForwardVolRow[];
 };
 
@@ -50,6 +54,8 @@ export type TopForwardVolResponse = {
   successfulSymbols: number;
   isComplete: boolean;
   isWarming: boolean;
+  isStale?: boolean;
+  warning?: string | null;
   rows: RankedForwardVolRow[];
 };
 
@@ -136,6 +142,7 @@ export type PreEarningsRow = {
   isViable: boolean;
   notes: string;
   quoteTime: string | null;
+  isStale?: boolean;
 };
 
 export type PreEarningsRejectedRow = {
@@ -156,6 +163,7 @@ export type PreEarningsRejectedRow = {
   iv30Rv30Pass: boolean | null;
   tsSlopePass: boolean | null;
   verdict: PreEarningsVerdict | null;
+  isStale?: boolean;
 };
 
 export type TopPreEarningsResponse = {
@@ -167,6 +175,8 @@ export type TopPreEarningsResponse = {
   rejectedSymbols: number;
   isComplete: boolean;
   isWarming: boolean;
+  isStale?: boolean;
+  warning?: string | null;
   rows: PreEarningsRow[];
   rejectedRows: PreEarningsRejectedRow[];
 };

@@ -16,7 +16,12 @@ import {
 } from "@/lib/earnings-filter";
 import { getMarketDateIso } from "@/lib/market-time";
 import type { EarningsInfo } from "@/lib/server/earnings-provider";
-import { marketDataProvider, getOptionDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
+import {
+  marketDataProvider,
+  getOptionDataProvider,
+  isOptionSnapshotStale,
+  type OptionContract,
+} from "@/lib/server/market-data-provider";
 import type { ForwardVolRow, TargetPair } from "@/lib/types";
 
 const MIN_VIABLE_ADJUSTED_EDGE = 0.2;
@@ -325,6 +330,11 @@ export async function computeForwardVolRowsForSymbol(
       };
     }),
   );
+
+  for (const row of rows) {
+    row.quoteTime ??= snapshot.quoteTime;
+    row.isStale = isOptionSnapshotStale(snapshot);
+  }
 
   rows.sort((a, b) => {
     const aEdge = a.forwardVolEdge ?? Number.NEGATIVE_INFINITY;

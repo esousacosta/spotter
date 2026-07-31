@@ -1,4 +1,9 @@
-import { marketDataProvider, getOptionDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
+import {
+  getOptionDataProvider,
+  isOptionSnapshotStale,
+  marketDataProvider,
+  type OptionContract,
+} from "@/lib/server/market-data-provider";
 import type { EarningsInfo } from "@/lib/server/earnings-provider";
 import { getMarketDateIso } from "@/lib/market-time";
 import type {
@@ -160,10 +165,7 @@ function verdictFromFlags(input: {
 function baseRejectedRow(
   ticker: Ticker,
   earningsInfo: EarningsInfo | null,
-  overrides: Omit<
-    PreEarningsRejectedRow,
-    "symbol" | "companyName" | "nextEarningsDate" | "earningsSession"
-  >,
+  overrides: RejectedRowOverrides,
 ): PreEarningsRejectedRow {
   return {
     symbol: ticker.symbol,
@@ -173,6 +175,11 @@ function baseRejectedRow(
     ...overrides,
   };
 }
+
+type RejectedRowOverrides = Omit<
+  PreEarningsRejectedRow,
+  "symbol" | "companyName" | "nextEarningsDate" | "earningsSession"
+>;
 
 function describeAvoidReason(input: {
   avgVolume30: number;
@@ -214,11 +221,14 @@ export async function computePreEarningsRow(
 ): Promise<PreEarningsScanResult> {
   const optionProvider = getOptionDataProvider();
   const snapshot = await optionProvider.getOptionSnapshot(ticker.symbol);
+  const snapshotIsStale = isOptionSnapshotStale(snapshot);
+  const rejectedRow = (overrides: RejectedRowOverrides): PreEarningsRejectedRow =>
+    baseRejectedRow(ticker, earningsInfo, { ...overrides, isStale: snapshotIsStale });
   const filteredExpiries = filterExpiries(snapshot.expirations, now);
   if (filteredExpiries.length === 0) {
     return {
       outcome: "rejected",
-      row: baseRejectedRow(ticker, earningsInfo, {
+      row: rejectedRow({
         rejectionCategory: "data",
         rejectionStage: "Option expiries",
         rejectionReason:
@@ -280,7 +290,7 @@ export async function computePreEarningsRow(
   if (dtes.length < 2) {
     return {
       outcome: "rejected",
-      row: baseRejectedRow(ticker, earningsInfo, {
+      row: rejectedRow({
         rejectionCategory: "data",
         rejectionStage: "ATM IV term structure",
         rejectionReason:
@@ -305,7 +315,7 @@ export async function computePreEarningsRow(
   if (Math.abs(slopeDenominator) < 1e-8) {
     return {
       outcome: "rejected",
-      row: baseRejectedRow(ticker, earningsInfo, {
+      row: rejectedRow({
         rejectionCategory: "data",
         rejectionStage: "Slope calculation",
         rejectionReason:
@@ -339,7 +349,7 @@ export async function computePreEarningsRow(
   if (!rv30 || rv30 <= 0) {
     return {
       outcome: "rejected",
-      row: baseRejectedRow(ticker, earningsInfo, {
+      row: rejectedRow({
         rejectionCategory: "data",
         rejectionStage: "Historical volatility",
         rejectionReason:
@@ -362,7 +372,7 @@ export async function computePreEarningsRow(
   if (recentVolumes.length < 30) {
     return {
       outcome: "rejected",
-      row: baseRejectedRow(ticker, earningsInfo, {
+      row: rejectedRow({
         rejectionCategory: "data",
         rejectionStage: "Volume history",
         rejectionReason:
@@ -412,12 +422,13 @@ export async function computePreEarningsRow(
           ? "Consider: term-structure check passed with one supporting signal."
           : "Avoid: pre-earnings viability checks did not pass.",
     quoteTime: snapshot.quoteTime,
+    isStale: isOptionSnapshotStale(snapshot),
   };
 
   if (verdict === "avoid") {
     return {
       outcome: "rejected",
-      row: baseRejectedRow(ticker, earningsInfo, {
+      row: rejectedRow({
         rejectionCategory: "criteria",
         rejectionStage: "Viability rules",
         rejectionReason: describeAvoidReason({

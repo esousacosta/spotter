@@ -67,6 +67,11 @@ export async function POST(request: Request) {
     const response: ForwardVolResponse = {
       symbol,
       asOf: now.toISOString(),
+      quoteAsOf: rows.find((row) => row.quoteTime)?.quoteTime ?? null,
+      isStale: rows.some((row) => row.isStale),
+      warning: rows.some((row) => row.isStale)
+        ? "Showing cached IBKR quotes while a live refresh runs in the background."
+        : null,
       rows,
     };
     return NextResponse.json(response);

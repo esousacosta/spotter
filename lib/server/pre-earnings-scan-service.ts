@@ -46,6 +46,7 @@ type ScanState = {
 type PersistedScanState = Omit<ScanState, "runPromise">;
 
 const scanStates = new Map<number, ScanState>();
+const staleScanStates = new Map<number, ScanState>();
 let scanGeneration = 0;
 const LEGACY_MAP_SHAPE_ERROR_FRAGMENT = "chain.callsbyexpiry.keys";
 
@@ -119,21 +120,39 @@ function buildFetchFailureRow(
   });
 }
 
-function snapshotFromState(state: ScanState, topN: number | null): TopPreEarningsResponse {
-  const sortedRows = [...state.rows].sort((a, b) => comparePreEarningsRows(a, b, new Date(state.asOf)));
-  const sortedRejectedRows = [...state.rejectedRows].sort((a, b) =>
-    compareRejectedPreEarningsRows(a, b, new Date(state.asOf)),
+function snapshotFromState(
+  state: ScanState,
+  topN: number | null,
+  staleState: ScanState | null = null,
+): TopPreEarningsResponse {
+  const visibleState = state.status === "complete" || !staleState ? state : staleState;
+  const sortedRows = [...visibleState.rows].sort((a, b) =>
+    comparePreEarningsRows(a, b, new Date(visibleState.asOf)),
+  );
+  const sortedRejectedRows = [...visibleState.rejectedRows].sort((a, b) =>
+    compareRejectedPreEarningsRows(a, b, new Date(visibleState.asOf)),
   );
 
   return {
-    asOf: state.asOf,
-    scannedSymbols: state.scannedSymbols,
-    evaluatedSymbols: state.evaluatedSymbols,
-    computedSymbols: state.computedSymbols,
+    asOf: visibleState.asOf,
+    scannedSymbols: visibleState.scannedSymbols,
+    evaluatedSymbols: visibleState.evaluatedSymbols,
+    computedSymbols: visibleState.computedSymbols,
     viableSymbols: sortedRows.length,
     rejectedSymbols: sortedRejectedRows.length,
     isComplete: state.status === "complete",
     isWarming: state.status === "running",
+    isStale:
+      visibleState !== state ||
+      sortedRows.some((row) => row.isStale) ||
+      sortedRejectedRows.some((row) => row.isStale),
+    warning:
+      visibleState !== state
+        ? "Showing the previous completed scan while a fresh scan runs in the background."
+        : sortedRows.some((row) => row.isStale) ||
+            sortedRejectedRows.some((row) => row.isStale)
+          ? "Some results use cached IBKR quotes while live refreshes run in the background."
+          : null,
     rows: topN === null ? sortedRows : sortedRows.slice(0, topN),
     rejectedRows: sortedRejectedRows,
   };
@@ -166,7 +185,7 @@ async function persistCompletedScanState(state: ScanState): Promise<void> {
   await fs.promises.writeFile(filePath, JSON.stringify(persisted), "utf8");
 }
 
-function loadScanStateFromDisk(scanLimit: number): ScanState | null {
+function loadScanStateFromDisk(scanLimit: number | null): ScanState | null {
   const filePath = getScanStateFilePath();
   try {
     const raw = fs.readFileSync(filePath, "utf8");
@@ -185,7 +204,7 @@ function loadScanStateFromDisk(scanLimit: number): ScanState | null {
       return null;
     }
 
-    if (parsed.scanLimit !== scanLimit || parsed.expiresAtMs <= Date.now() || parsed.status !== "complete") {
+    if ((scanLimit !== null && parsed.scanLimit !== scanLimit) || parsed.status !== "complete") {
       return null;
     }
 
@@ -357,21 +376,26 @@ async function startScan(scanLimit: number): Promise<ScanState> {
     if ((freshComplete && !hasLegacyError) || existing.status === "running") {
       return existing;
     }
+    if (existing.status === "complete" && !hasLegacyError) {
+      staleScanStates.set(scanLimit, existing);
+    }
   }
 
   const diskState = loadScanStateFromDisk(scanLimit);
   if (diskState) {
-    scanStates.set(scanLimit, diskState);
-    console.info(`[pre-earnings] loaded completed scan from disk cache (${scanLimit} symbols).`);
-    return diskState;
+    if (diskState.expiresAtMs > Date.now()) {
+      scanStates.set(scanLimit, diskState);
+      console.info(`[pre-earnings] loaded completed scan from disk cache (${scanLimit} symbols).`);
+      return diskState;
+    }
+    staleScanStates.set(scanLimit, diskState);
   }
 
-  const allTickers = await marketDataProvider.getSP500Tickers();
-  const tickers = allTickers.slice(0, scanLimit);
+  const staleState = staleScanStates.get(scanLimit);
   const state: ScanState = {
     asOf: new Date().toISOString(),
     scanLimit,
-    scannedSymbols: tickers.length,
+    scannedSymbols: staleState?.scannedSymbols ?? scanLimit,
     evaluatedSymbols: 0,
     computedSymbols: 0,
     rows: [],
@@ -382,11 +406,17 @@ async function startScan(scanLimit: number): Promise<ScanState> {
   };
   const generation = scanGeneration;
 
-  const runPromise = processScan(state, tickers, generation)
+  const runPromise = (async () => {
+    const allTickers = await marketDataProvider.getSP500Tickers();
+    const tickers = allTickers.slice(0, scanLimit);
+    state.scannedSymbols = tickers.length;
+    await processScan(state, tickers, generation);
+  })()
     .then(async () => {
       if (generation !== scanGeneration) return;
       state.status = "complete";
       state.expiresAtMs = Date.now() + SCAN_CACHE_TTL_MS;
+      staleScanStates.delete(scanLimit);
       try {
         await persistCompletedScanState(state);
       } catch (error) {
@@ -428,11 +458,21 @@ export async function getPreEarningsScan(options: {
   topN?: number;
   scanLimit?: number;
 }): Promise<TopPreEarningsResponse> {
-  const allTickers = await marketDataProvider.getSP500Tickers();
-  const scanLimit = options.scanLimit ?? allTickers.length;
   const topN = options.topN ?? null; // null = no limit
+  let scanLimit = options.scanLimit;
+  if (scanLimit === undefined) {
+    const knownState =
+      [...scanStates.values()].sort((a, b) => b.scanLimit - a.scanLimit)[0] ??
+      loadScanStateFromDisk(null);
+    if (knownState) {
+      scanLimit = knownState.scanLimit;
+    } else {
+      const allTickers = await marketDataProvider.getSP500Tickers();
+      scanLimit = allTickers.length;
+    }
+  }
   const state = await startScan(scanLimit);
-  return snapshotFromState(state, topN);
+  return snapshotFromState(state, topN, staleScanStates.get(scanLimit) ?? null);
 }
 
 export function warmPreEarningsScan(scanLimit?: number): void {
@@ -449,6 +489,7 @@ export function warmPreEarningsScan(scanLimit?: number): void {
 export async function clearPreEarningsScanCache(): Promise<void> {
   scanGeneration += 1;
   scanStates.clear();
+  staleScanStates.clear();
   const filePath = getScanStateFilePath();
   try {
     await fs.promises.unlink(filePath);
