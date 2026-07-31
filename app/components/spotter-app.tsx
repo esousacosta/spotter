@@ -518,6 +518,8 @@ function ForwardTradeDetailsPanel({
 
 export function SpotterApp() {
   const [activeTab, setActiveTab] = useState<"forward" | "preearnings" | "upcomingearnings">("forward");
+  const [forwardSubtab, setForwardSubtab] = useState<"viable" | "rejected">("viable");
+  const [marketForwardSubtab, setMarketForwardSubtab] = useState<"viable" | "rejected">("viable");
   const [preEarningsSubtab, setPreEarningsSubtab] = useState<"viable" | "rejected">("viable");
   const [tickers, setTickers] = useState<Ticker[]>([]);
   const [symbol, setSymbol] = useState<string>(DEFAULT_SYMBOL);
@@ -729,6 +731,12 @@ export function SpotterApp() {
   const hasPreRows = useMemo(() => preRows.length > 0, [preRows.length]);
   const hasPreRejectedRows = useMemo(() => preRejectedRows.length > 0, [preRejectedRows.length]);
   const hasUpcomingRows = useMemo(() => upcomingRows.length > 0, [upcomingRows.length]);
+  const viableForwardRows = useMemo(() => data?.rows.filter((row) => row.isViable) ?? [], [data]);
+  const rejectedForwardRows = useMemo(() => data?.rows.filter((row) => !row.isViable) ?? [], [data]);
+  const visibleForwardRows = forwardSubtab === "viable" ? viableForwardRows : rejectedForwardRows;
+  const viableTopRows = useMemo(() => topRows.filter((row) => row.isViable), [topRows]);
+  const rejectedTopRows = useMemo(() => topRows.filter((row) => !row.isViable), [topRows]);
+  const visibleTopRows = marketForwardSubtab === "viable" ? viableTopRows : rejectedTopRows;
 
   async function ensureForwardTradeAnalytics(row: ForwardVolRow, rowSymbol: string): Promise<void> {
     const rowKey = buildForwardTradeRowKey({
@@ -975,15 +983,23 @@ export function SpotterApp() {
   }
 
   return (
-    <main className="container">
-      <div className="header-row">
-        <div>
-          <h1>Forward Volatility Spotter</h1>
-          <p className="muted">Scan calendar opportunities and pre-earnings setups from one place.</p>
+    <main className="app-shell">
+      <header className="app-header">
+        <div className="brand">
+          <div className="brand-mark" aria-hidden="true">
+            FV
+          </div>
+          <div>
+            <p className="eyebrow">Options research workspace</p>
+            <h1>Forward Volatility Spotter</h1>
+            <p className="header-description">
+              Screen calendar spreads, validate earnings setups, and review the reasons behind every rejection.
+            </p>
+          </div>
         </div>
         <div className="header-actions">
           {ibkrStatus === "loading" ? (
-            <span className="quote-source-badge quote-source-badge--checking">Checking quotes…</span>
+            <span className="quote-source-badge quote-source-badge--checking">Checking quotes...</span>
           ) : ibkrStatus === null ? null : ibkrStatus.enabled && ibkrStatus.authenticated ? (
             <span className="quote-source-badge quote-source-badge--live" title={`IBKR gateway: ${ibkrStatus.gatewayUrl}`}>
               Live quotes (IBKR)
@@ -991,505 +1007,812 @@ export function SpotterApp() {
           ) : ibkrStatus.enabled ? (
             <span
               className="quote-source-badge quote-source-badge--error"
-              title={ibkrStatus.error ?? `IBKR not authenticated — open ${ibkrStatus.gatewayUrl} to log in`}
+              title={ibkrStatus.error ?? `IBKR not authenticated - open ${ibkrStatus.gatewayUrl} to log in`}
             >
-              IBKR offline — delayed
+              IBKR offline - delayed
             </span>
           ) : (
             <span className="quote-source-badge quote-source-badge--delayed" title="Using Cboe delayed option data">
               Delayed quotes (Cboe)
             </span>
           )}
-          <button type="button" className="cache-clear-button" onClick={() => void clearServerCaches()} disabled={cacheClearing}>
-            {cacheClearing ? "Clearing cache..." : "Clear cache"}
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => void clearServerCaches()}
+            disabled={cacheClearing}
+          >
+            {cacheClearing ? "Clearing..." : "Clear cache"}
           </button>
         </div>
-      </div>
-      {cacheNotice ? <p className="muted">{cacheNotice}</p> : null}
+      </header>
+
+      {cacheNotice ? <p className="notice notice--success">{cacheNotice}</p> : null}
       {cacheError ? <p className="error">{cacheError}</p> : null}
 
-      <section className="tabs">
+      <nav className="primary-nav" aria-label="Screening workflows">
         <button
           type="button"
-          className={activeTab === "forward" ? "tab-active" : ""}
+          className={activeTab === "forward" ? "primary-nav-item is-active" : "primary-nav-item"}
           onClick={() => setActiveTab("forward")}
+          aria-pressed={activeTab === "forward"}
         >
-          Forward-vol trades
+          <span className="nav-index">01</span>
+          <span>
+            <strong>Forward vol</strong>
+            <small>Calendar spread edges</small>
+          </span>
         </button>
         <button
           type="button"
-          className={activeTab === "preearnings" ? "tab-active" : ""}
+          className={activeTab === "preearnings" ? "primary-nav-item is-active" : "primary-nav-item"}
           onClick={() => setActiveTab("preearnings")}
+          aria-pressed={activeTab === "preearnings"}
         >
-          Pre-earnings viable trades
+          <span className="nav-index">02</span>
+          <span>
+            <strong>Pre-earnings</strong>
+            <small>Viability checks</small>
+          </span>
         </button>
         <button
           type="button"
-          className={activeTab === "upcomingearnings" ? "tab-active" : ""}
+          className={activeTab === "upcomingearnings" ? "primary-nav-item is-active" : "primary-nav-item"}
           onClick={() => setActiveTab("upcomingearnings")}
+          aria-pressed={activeTab === "upcomingearnings"}
         >
-          Upcoming announced earnings
+          <span className="nav-index">03</span>
+          <span>
+            <strong>Earnings calendar</strong>
+            <small>Upcoming announcements</small>
+          </span>
         </button>
-      </section>
+      </nav>
 
-      {activeTab === "forward" ? (
-        <>
-          <section className="controls">
-            <label htmlFor="ticker-select">S&P 500 ticker</label>
-            <select
-              id="ticker-select"
-              value={symbol}
-              onChange={(event) => setSymbol(event.target.value)}
-              disabled={tickersLoading}
-            >
-              {tickers.length === 0 ? (
-                <option value="">{tickersLoading ? "Loading tickers..." : "No tickers available"}</option>
-              ) : (
-                tickers.map((ticker) => (
-                  <option key={ticker.symbol} value={ticker.symbol}>
-                    {ticker.symbol} — {ticker.name}
-                  </option>
-                ))
-              )}
-            </select>
-            <button type="button" onClick={() => void loadTopRows()} disabled={topRowsLoading}>
-              {topRowsLoading ? "Scanning S&P 500..." : "Find all opportunities"}
-            </button>
-          </section>
+      <div className="workspace">
+        {activeTab === "forward" ? (
+          <>
+            <section className="panel">
+              <div className="section-header">
+                <div>
+                  <p className="eyebrow">Single-symbol screener</p>
+                  <h2>Inspect calendar spread pairs</h2>
+                  <p className="section-description">
+                    Select a ticker to compare target tenors. Candidates and rejected trades are separated below.
+                  </p>
+                </div>
+              </div>
 
-          {error ? <p className="error">{error}</p> : null}
-          {rowsLoading ? <p className="muted">Calculating forward volatility edge...</p> : null}
-          {data?.isStale ? <p className="muted">{data.warning}</p> : null}
-          {topRowsLoading ? <p className="muted">Scanning symbols to find top edges...</p> : null}
-          {!topRowsLoading && topScanMeta?.isWarming ? (
-            <p className="muted">Top-opportunities scan in progress... refreshing as new symbols complete.</p>
-          ) : null}
-          {topError ? <p className="error">{topError}</p> : null}
-          {!rowsLoading && !hasRows ? <p className="muted">No results available for this symbol.</p> : null}
+              <div className="control-bar">
+                <div className="field-group">
+                  <label htmlFor="ticker-select">S&amp;P 500 ticker</label>
+                  <select
+                    id="ticker-select"
+                    value={symbol}
+                    onChange={(event) => setSymbol(event.target.value)}
+                    disabled={tickersLoading}
+                  >
+                    {tickers.length === 0 ? (
+                      <option value="">{tickersLoading ? "Loading tickers..." : "No tickers available"}</option>
+                    ) : (
+                      tickers.map((ticker) => (
+                        <option key={ticker.symbol} value={ticker.symbol}>
+                          {ticker.symbol} - {ticker.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <div className="control-context">
+                  <span>Automatic scan</span>
+                  <strong>{rowsLoading ? "Calculating edge..." : symbol || "Choose a ticker"}</strong>
+                </div>
+              </div>
 
-          {data && hasRows ? (
-            <section className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Pair (target)</th>
-                    <th>Details</th>
-                    <th>Trade Class</th>
-                    <th>
-                      Actual <AcronymHint short="DTEs" title="Days To Expiration" />
-                    </th>
-                    <th>Next Earnings</th>
-                    <th>Strike (ATM)</th>
-                    <th>
-                      Short <AcronymHint short="IV" title="Implied Volatility" />
-                    </th>
-                    <th>
-                      Long <AcronymHint short="IV" title="Implied Volatility" />
-                    </th>
-                    <th>
-                      Short <AcronymHint short="OI" title="Open Interest" />
-                    </th>
-                    <th>
-                      Long <AcronymHint short="OI" title="Open Interest" />
-                    </th>
-                    <th>Forward Vol</th>
-                    <th>Raw Edge</th>
-                    <th>Adj Edge</th>
-                    <th>Viable?</th>
-                    <th>Quote Time</th>
-                    <th>Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.rows.map((row) => {
-                    const rowClass =
-                      row.status === "invalid"
-                        ? "row-invalid"
-                        : row.isViable
-                          ? "row-viable"
-                          : "row-not-viable";
-                    const rowKey = buildForwardTradeRowKey({
-                      symbol,
-                      shortExpiry: row.shortExpiry,
-                      longExpiry: row.longExpiry,
-                      selectedStrike: row.selectedStrike,
-                    });
-                    const canDrilldown = rowKey !== null && isForwardTradeDrilldownEligible(row);
-                    const isExpanded = rowKey !== null && expandedForwardRowKey === rowKey;
-                    const analytics = rowKey ? analyticsByRowKey[rowKey] ?? null : null;
-                    const analyticsLoading = rowKey ? analyticsLoadingByRowKey[rowKey] ?? false : false;
-                    const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
+              {error ? <p className="error">{error}</p> : null}
+              {rowsLoading ? <p className="notice notice--loading">Calculating forward volatility edge...</p> : null}
+              {data?.isStale ? <p className="notice notice--warning">{data.warning}</p> : null}
+              {!rowsLoading && !hasRows ? (
+                <div className="empty-state">
+                  <strong>No results available</strong>
+                  <span>Choose another ticker or clear the cache and try again.</span>
+                </div>
+              ) : null}
 
-                    return (
-                      <Fragment key={`${row.shortTargetDte}-${row.longTargetDte}`}>
-                        <tr className={rowClass}>
-                          <td>
-                            {row.shortTargetDte}/{row.longTargetDte}
-                          </td>
-                          <td>
-                            <button type="button" onClick={() => onToggleForwardRow(row)} disabled={!canDrilldown}>
-                              {isExpanded ? "Hide" : "Details"}
-                            </button>
-                          </td>
-                          <td>{row.tradeClass ?? "—"}</td>
-                          <td>
-                            {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
-                          </td>
-                          <td>{row.nextEarningsDate ?? "—"}</td>
-                          <td>{asNumber(row.selectedStrike)}</td>
-                          <td>{asPct(row.ivShort)}</td>
-                          <td>{asPct(row.ivLong)}</td>
-                          <td>{asInteger(row.shortOpenInterest)}</td>
-                          <td>{asInteger(row.longOpenInterest)}</td>
-                          <td>{asPct(row.forwardVol)}</td>
-                          <td>{asPct(row.rawForwardVolEdge)}</td>
-                          <td>{asPct(row.adjustedForwardVolEdge)}</td>
-                          <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
-                          <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
-                          <td>{row.notes}</td>
-                        </tr>
-                        {isExpanded ? (
-                          <tr className="row-drilldown">
-                            <td colSpan={16}>
-                              <ForwardTradeDetailsPanel
-                                loading={analyticsLoading}
-                                error={analyticsError}
-                                analytics={analytics}
-                              />
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+              {data && hasRows ? (
+                <>
+                  <div className="summary-grid" aria-label={`${data.symbol} scan summary`}>
+                    <article>
+                      <span>Symbol</span>
+                      <strong>{data.symbol}</strong>
+                      <small>As of {formatTimeAgo(data.asOf)}</small>
+                    </article>
+                    <article>
+                      <span>Pairs checked</span>
+                      <strong>{data.rows.length}</strong>
+                      <small>Target tenor combinations</small>
+                    </article>
+                    <article className="summary-positive">
+                      <span>Candidates</span>
+                      <strong>{viableForwardRows.length}</strong>
+                      <small>Passed viability threshold</small>
+                    </article>
+                    <article className="summary-negative">
+                      <span>Rejected</span>
+                      <strong>{rejectedForwardRows.length}</strong>
+                      <small>Review reasons and inputs</small>
+                    </article>
+                  </div>
+
+                  <section className="results-section">
+                    <div className="results-toolbar">
+                      <div>
+                        <h3>{data.symbol} trade results</h3>
+                        <p>Use Details to inspect the risk profile for any calculable row.</p>
+                      </div>
+                      <div className="segmented-control" aria-label="Filter forward-vol results">
+                        <button
+                          type="button"
+                          className={forwardSubtab === "viable" ? "is-active" : ""}
+                          onClick={() => setForwardSubtab("viable")}
+                          aria-pressed={forwardSubtab === "viable"}
+                        >
+                          Candidates <span>{viableForwardRows.length}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={forwardSubtab === "rejected" ? "is-active" : ""}
+                          onClick={() => setForwardSubtab("rejected")}
+                          aria-pressed={forwardSubtab === "rejected"}
+                        >
+                          Rejected <span>{rejectedForwardRows.length}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {visibleForwardRows.length > 0 ? (
+                      <div className="table-wrap">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Pair (target)</th>
+                              <th>Details</th>
+                              <th>Trade Class</th>
+                              <th>
+                                Actual <AcronymHint short="DTEs" title="Days To Expiration" />
+                              </th>
+                              <th>Next Earnings</th>
+                              <th>Strike (ATM)</th>
+                              <th>
+                                Short <AcronymHint short="IV" title="Implied Volatility" />
+                              </th>
+                              <th>
+                                Long <AcronymHint short="IV" title="Implied Volatility" />
+                              </th>
+                              <th>
+                                Short <AcronymHint short="OI" title="Open Interest" />
+                              </th>
+                              <th>
+                                Long <AcronymHint short="OI" title="Open Interest" />
+                              </th>
+                              <th>Forward Vol</th>
+                              <th>Raw Edge</th>
+                              <th>Adj Edge</th>
+                              <th>Status</th>
+                              <th>Quote Time</th>
+                              <th>Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {visibleForwardRows.map((row) => {
+                              const rowClass =
+                                row.status === "invalid"
+                                  ? "row-invalid"
+                                  : row.isViable
+                                    ? "row-viable"
+                                    : "row-not-viable";
+                              const rowKey = buildForwardTradeRowKey({
+                                symbol,
+                                shortExpiry: row.shortExpiry,
+                                longExpiry: row.longExpiry,
+                                selectedStrike: row.selectedStrike,
+                              });
+                              const canDrilldown = rowKey !== null && isForwardTradeDrilldownEligible(row);
+                              const isExpanded = rowKey !== null && expandedForwardRowKey === rowKey;
+                              const analytics = rowKey ? analyticsByRowKey[rowKey] ?? null : null;
+                              const analyticsLoading = rowKey ? analyticsLoadingByRowKey[rowKey] ?? false : false;
+                              const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
+
+                              return (
+                                <Fragment key={`${row.shortTargetDte}-${row.longTargetDte}`}>
+                                  <tr className={rowClass}>
+                                    <td className="cell-emphasis">
+                                      {row.shortTargetDte}/{row.longTargetDte}
+                                    </td>
+                                    <td>
+                                      <button
+                                        type="button"
+                                        className="table-action"
+                                        onClick={() => onToggleForwardRow(row)}
+                                        disabled={!canDrilldown}
+                                      >
+                                        {isExpanded ? "Close" : "View"}
+                                      </button>
+                                    </td>
+                                    <td>{row.tradeClass ?? "—"}</td>
+                                    <td>
+                                      {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
+                                    </td>
+                                    <td>{row.nextEarningsDate ?? "—"}</td>
+                                    <td>{asNumber(row.selectedStrike)}</td>
+                                    <td>{asPct(row.ivShort)}</td>
+                                    <td>{asPct(row.ivLong)}</td>
+                                    <td>{asInteger(row.shortOpenInterest)}</td>
+                                    <td>{asInteger(row.longOpenInterest)}</td>
+                                    <td>{asPct(row.forwardVol)}</td>
+                                    <td>{asPct(row.rawForwardVolEdge)}</td>
+                                    <td>{asPct(row.adjustedForwardVolEdge)}</td>
+                                    <td className="viability-cell">
+                                      <span className="status-pill">{row.isViable ? "Candidate" : "Rejected"}</span>
+                                    </td>
+                                    <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
+                                    <td className="notes-cell">{row.notes}</td>
+                                  </tr>
+                                  {isExpanded ? (
+                                    <tr className="row-drilldown">
+                                      <td colSpan={16}>
+                                        <ForwardTradeDetailsPanel
+                                          loading={analyticsLoading}
+                                          error={analyticsError}
+                                          analytics={analytics}
+                                        />
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                </Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="empty-state empty-state--compact">
+                        <strong>
+                          {forwardSubtab === "viable" ? "No candidate trades" : "No rejected trades"}
+                        </strong>
+                        <span>
+                          {forwardSubtab === "viable"
+                            ? `${data.symbol} has no pairs above the viability threshold.`
+                            : `Every calculable ${data.symbol} pair passed the viability threshold.`}
+                        </span>
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : null}
             </section>
-          ) : null}
 
-          {topScanMeta ? (
-            <p className="muted">
-              Scanned {topScanMeta.scannedSymbols} symbols, processed {topScanMeta.processedSymbols}, found valid
-              opportunities for {topScanMeta.successfulSymbols}
-              {topScanMeta.isComplete ? "." : " so far."}{" "}
-              Data as of <strong>{formatTimeAgo(topScanMeta.asOf)}</strong>
-              {topScanMeta.isStale ? " (cached quotes are refreshing)." : "."}
-            </p>
-          ) : null}
+            <section className="panel">
+              <div className="section-header section-header--action">
+                <div>
+                  <p className="eyebrow">Market-wide screener</p>
+                  <h2>Rank the S&amp;P 500 universe</h2>
+                  <p className="section-description">
+                    Scan every symbol and review the best candidate or rejected setup returned for each company.
+                  </p>
+                </div>
+                <button type="button" className="button-primary" onClick={() => void loadTopRows()} disabled={topRowsLoading}>
+                  {topRowsLoading ? "Scanning S&P 500..." : "Run market scan"}
+                </button>
+              </div>
 
-          {hasTopRows ? (
-            <section className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Company</th>
-                    <th>Pair (target)</th>
-                    <th>Details</th>
-                    <th>Trade Class</th>
-                    <th>
-                      Actual <AcronymHint short="DTEs" title="Days To Expiration" />
-                    </th>
-                    <th>Next Earnings</th>
-                    <th>Strike (ATM)</th>
-                    <th>
-                      Short <AcronymHint short="IV" title="Implied Volatility" />
-                    </th>
-                    <th>
-                      Long <AcronymHint short="IV" title="Implied Volatility" />
-                    </th>
-                    <th>
-                      Short <AcronymHint short="OI" title="Open Interest" />
-                    </th>
-                    <th>
-                      Long <AcronymHint short="OI" title="Open Interest" />
-                    </th>
-                    <th>Forward Vol</th>
-                    <th>Raw Edge</th>
-                    <th>Adj Edge</th>
-                    <th>Viable?</th>
-                    <th>Quote Time</th>
-                    <th>Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topRows.map((row) => {
-                    const rowClass =
-                      row.status === "invalid"
-                        ? "row-invalid"
-                        : row.isViable
-                          ? "row-viable"
-                          : "row-not-viable";
-                    const rowKey = buildForwardTradeRowKey({
-                      symbol: row.symbol,
-                      shortExpiry: row.shortExpiry,
-                      longExpiry: row.longExpiry,
-                      selectedStrike: row.selectedStrike,
-                    });
-                    const canDrilldown = rowKey !== null && isForwardTradeDrilldownEligible(row);
-                    const isExpanded = rowKey !== null && expandedTopRowKey === rowKey;
-                    const analytics = rowKey ? analyticsByRowKey[rowKey] ?? null : null;
-                    const analyticsLoading = rowKey ? analyticsLoadingByRowKey[rowKey] ?? false : false;
-                    const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
+              {topRowsLoading ? <p className="notice notice--loading">Scanning symbols to find top edges...</p> : null}
+              {!topRowsLoading && topScanMeta?.isWarming ? (
+                <p className="notice notice--loading">
+                  Market scan is in progress. Results refresh as each batch completes.
+                </p>
+              ) : null}
+              {topError ? <p className="error">{topError}</p> : null}
 
-                    return (
-                      <Fragment key={`${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}`}>
-                        <tr className={rowClass}>
-                          <td>{row.symbol}</td>
+              {topScanMeta ? (
+                <>
+                  <div className="summary-grid">
+                    <article>
+                      <span>Universe</span>
+                      <strong>{topScanMeta.scannedSymbols}</strong>
+                      <small>S&amp;P 500 symbols</small>
+                    </article>
+                    <article>
+                      <span>Processed</span>
+                      <strong>{topScanMeta.processedSymbols}</strong>
+                      <small>{topScanMeta.isComplete ? "Scan complete" : "Still scanning"}</small>
+                    </article>
+                    <article className="summary-positive">
+                      <span>Candidates</span>
+                      <strong>{viableTopRows.length}</strong>
+                      <small>Passed viability threshold</small>
+                    </article>
+                    <article className="summary-negative">
+                      <span>Rejected</span>
+                      <strong>{rejectedTopRows.length}</strong>
+                      <small>Best row did not qualify</small>
+                    </article>
+                  </div>
+                  <p className="scan-caption">
+                    Snapshot from {formatTimeAgo(topScanMeta.asOf)}
+                    {topScanMeta.isStale ? " - cached quotes are refreshing." : "."}
+                  </p>
+                </>
+              ) : null}
+
+              {hasTopRows ? (
+                <section className="results-section">
+                  <div className="results-toolbar">
+                    <div>
+                      <h3>Market scan results</h3>
+                      <p>Sorted by forward volatility edge within each result group.</p>
+                    </div>
+                    <div className="segmented-control" aria-label="Filter market scan results">
+                      <button
+                        type="button"
+                        className={marketForwardSubtab === "viable" ? "is-active" : ""}
+                        onClick={() => setMarketForwardSubtab("viable")}
+                        aria-pressed={marketForwardSubtab === "viable"}
+                      >
+                        Candidates <span>{viableTopRows.length}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={marketForwardSubtab === "rejected" ? "is-active" : ""}
+                        onClick={() => setMarketForwardSubtab("rejected")}
+                        aria-pressed={marketForwardSubtab === "rejected"}
+                      >
+                        Rejected <span>{rejectedTopRows.length}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {visibleTopRows.length > 0 ? (
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Symbol</th>
+                            <th>Company</th>
+                            <th>Pair (target)</th>
+                            <th>Details</th>
+                            <th>Trade Class</th>
+                            <th>
+                              Actual <AcronymHint short="DTEs" title="Days To Expiration" />
+                            </th>
+                            <th>Next Earnings</th>
+                            <th>Strike (ATM)</th>
+                            <th>
+                              Short <AcronymHint short="IV" title="Implied Volatility" />
+                            </th>
+                            <th>
+                              Long <AcronymHint short="IV" title="Implied Volatility" />
+                            </th>
+                            <th>
+                              Short <AcronymHint short="OI" title="Open Interest" />
+                            </th>
+                            <th>
+                              Long <AcronymHint short="OI" title="Open Interest" />
+                            </th>
+                            <th>Forward Vol</th>
+                            <th>Raw Edge</th>
+                            <th>Adj Edge</th>
+                            <th>Status</th>
+                            <th>Quote Time</th>
+                            <th>Notes</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visibleTopRows.map((row) => {
+                            const rowClass =
+                              row.status === "invalid"
+                                ? "row-invalid"
+                                : row.isViable
+                                  ? "row-viable"
+                                  : "row-not-viable";
+                            const rowKey = buildForwardTradeRowKey({
+                              symbol: row.symbol,
+                              shortExpiry: row.shortExpiry,
+                              longExpiry: row.longExpiry,
+                              selectedStrike: row.selectedStrike,
+                            });
+                            const canDrilldown = rowKey !== null && isForwardTradeDrilldownEligible(row);
+                            const isExpanded = rowKey !== null && expandedTopRowKey === rowKey;
+                            const analytics = rowKey ? analyticsByRowKey[rowKey] ?? null : null;
+                            const analyticsLoading = rowKey ? analyticsLoadingByRowKey[rowKey] ?? false : false;
+                            const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
+
+                            return (
+                              <Fragment key={`${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}`}>
+                                <tr className={rowClass}>
+                                  <td className="cell-emphasis">{row.symbol}</td>
+                                  <td>{row.companyName}</td>
+                                  <td>
+                                    {row.shortTargetDte}/{row.longTargetDte}
+                                  </td>
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className="table-action"
+                                      onClick={() => onToggleTopRow(row)}
+                                      disabled={!canDrilldown}
+                                    >
+                                      {isExpanded ? "Close" : "View"}
+                                    </button>
+                                  </td>
+                                  <td>{row.tradeClass ?? "—"}</td>
+                                  <td>
+                                    {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
+                                  </td>
+                                  <td>{row.nextEarningsDate ?? "—"}</td>
+                                  <td>{asNumber(row.selectedStrike)}</td>
+                                  <td>{asPct(row.ivShort)}</td>
+                                  <td>{asPct(row.ivLong)}</td>
+                                  <td>{asInteger(row.shortOpenInterest)}</td>
+                                  <td>{asInteger(row.longOpenInterest)}</td>
+                                  <td>{asPct(row.forwardVol)}</td>
+                                  <td>{asPct(row.rawForwardVolEdge)}</td>
+                                  <td>{asPct(row.adjustedForwardVolEdge)}</td>
+                                  <td className="viability-cell">
+                                    <span className="status-pill">{row.isViable ? "Candidate" : "Rejected"}</span>
+                                  </td>
+                                  <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
+                                  <td className="notes-cell">{row.notes}</td>
+                                </tr>
+                                {isExpanded ? (
+                                  <tr className="row-drilldown">
+                                    <td colSpan={18}>
+                                      <ForwardTradeDetailsPanel
+                                        loading={analyticsLoading}
+                                        error={analyticsError}
+                                        analytics={analytics}
+                                      />
+                                    </td>
+                                  </tr>
+                                ) : null}
+                              </Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="empty-state empty-state--compact">
+                      <strong>
+                        {marketForwardSubtab === "viable" ? "No candidates yet" : "No rejected rows yet"}
+                      </strong>
+                      <span>The active market scan has not returned rows for this group.</span>
+                    </div>
+                  )}
+                </section>
+              ) : !topRowsLoading ? (
+                <div className="empty-state">
+                  <strong>Ready for a market-wide scan</strong>
+                  <span>Run the screener to rank the strongest edges across the S&amp;P 500.</span>
+                </div>
+              ) : null}
+            </section>
+          </>
+        ) : activeTab === "preearnings" ? (
+          <section className="panel">
+            <div className="section-header section-header--action">
+              <div>
+                <p className="eyebrow">Pre-earnings screener</p>
+                <h2>Validate volatility setups before earnings</h2>
+                <p className="section-description">
+                  Compare liquidity, implied-to-realized volatility, and term-structure checks across the universe.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="button-primary"
+                onClick={() => void loadPreEarningsRows()}
+                disabled={preRowsLoading}
+              >
+                {preRowsLoading ? "Scanning setups..." : "Run pre-earnings scan"}
+              </button>
+            </div>
+
+            {preRowsLoading ? <p className="notice notice--loading">Evaluating pre-earnings viability checks...</p> : null}
+            {!preRowsLoading && preMeta?.isWarming ? (
+              <p className="notice notice--loading">
+                Background scan is in progress. Cached results refresh as more symbols are processed.
+              </p>
+            ) : null}
+            {preError ? <p className="error">{preError}</p> : null}
+
+            {preMeta ? (
+              <>
+                <div className="summary-grid">
+                  <article>
+                    <span>Universe</span>
+                    <strong>{preMeta.scannedSymbols}</strong>
+                    <small>S&amp;P 500 symbols</small>
+                  </article>
+                  <article>
+                    <span>Computed</span>
+                    <strong>{preMeta.computedSymbols}</strong>
+                    <small>{preMeta.evaluatedSymbols} attempted</small>
+                  </article>
+                  <article className="summary-positive">
+                    <span>Viable</span>
+                    <strong>{preMeta.viableSymbols}</strong>
+                    <small>Passed all strategy checks</small>
+                  </article>
+                  <article className="summary-negative">
+                    <span>Rejected</span>
+                    <strong>{preMeta.rejectedSymbols}</strong>
+                    <small>Data or criteria failures</small>
+                  </article>
+                </div>
+                <p className="scan-caption">
+                  Snapshot from {formatTimeAgo(preMeta.asOf)}
+                  {preMeta.isStale ? " - cached quotes are refreshing." : "."}
+                </p>
+              </>
+            ) : null}
+
+            {preMeta ? (
+              <section className="results-section">
+                <div className="results-toolbar">
+                  <div>
+                    <h3>Pre-earnings results</h3>
+                    <p>Rejected tickers retain the failed stage and reason for faster diagnosis.</p>
+                  </div>
+                  <div className="segmented-control" aria-label="Filter pre-earnings results">
+                    <button
+                      type="button"
+                      className={preEarningsSubtab === "viable" ? "is-active" : ""}
+                      onClick={() => setPreEarningsSubtab("viable")}
+                      aria-pressed={preEarningsSubtab === "viable"}
+                    >
+                      Viable <span>{preRows.length}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={preEarningsSubtab === "rejected" ? "is-active" : ""}
+                      onClick={() => setPreEarningsSubtab("rejected")}
+                      aria-pressed={preEarningsSubtab === "rejected"}
+                    >
+                      Rejected <span>{preRejectedRows.length}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {preEarningsSubtab === "viable" && hasPreRows ? (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Symbol</th>
+                          <th>Company</th>
+                          <th>Next Earnings</th>
+                          <th>Earnings Session</th>
+                          <th>Verdict</th>
+                          <th>Viable?</th>
+                          <th>Avg Vol 30d</th>
+                          <th>
+                            <AcronymHint
+                              short="IV30/RV30"
+                              title="30-day Implied Volatility divided by 30-day Realized Volatility"
+                            />
+                          </th>
+                          <th>
+                            <AcronymHint short="TS" title="Term Structure" /> Slope 0→45
+                          </th>
+                          <th>Avg Vol Check</th>
+                          <th>
+                            <AcronymHint
+                              short="IV30/RV30"
+                              title="30-day Implied Volatility divided by 30-day Realized Volatility"
+                            />{" "}
+                            Check
+                          </th>
+                          <th>
+                            <AcronymHint short="TS" title="Term Structure" /> Slope Check
+                          </th>
+                          <th>Expected Move</th>
+                          <th>Quote Time</th>
+                          <th>Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preRows.map((row) => (
+                          <tr key={row.symbol} className={verdictClass(row)}>
+                            <td className="cell-emphasis">{row.symbol}</td>
+                            <td>{row.companyName}</td>
+                            <td>{row.nextEarningsDate ?? "—"}</td>
+                            <td>{row.earningsSession ?? "—"}</td>
+                            <td>
+                              <span className="status-pill">{row.verdict}</span>
+                            </td>
+                            <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
+                            <td>{asInteger(row.avgVolume30)}</td>
+                            <td>{asNumber(row.iv30Rv30)}</td>
+                            <td>{asNumber(row.tsSlope0To45)}</td>
+                            <td>{row.avgVolumePass ? "PASS" : "FAIL"}</td>
+                            <td>{row.iv30Rv30Pass ? "PASS" : "FAIL"}</td>
+                            <td>{row.tsSlopePass ? "PASS" : "FAIL"}</td>
+                            <td>{row.expectedMove ?? "—"}</td>
+                            <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
+                            <td className="notes-cell">{row.notes}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+
+                {preEarningsSubtab === "viable" && !hasPreRows ? (
+                  <div className="empty-state empty-state--compact">
+                    <strong>No viable setups</strong>
+                    <span>No ticker passed every pre-earnings check in this scan.</span>
+                  </div>
+                ) : null}
+
+                {preEarningsSubtab === "rejected" && hasPreRejectedRows ? (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Symbol</th>
+                          <th>Company</th>
+                          <th>Next Earnings</th>
+                          <th>Earnings Session</th>
+                          <th>Category</th>
+                          <th>Stage</th>
+                          <th>Verdict</th>
+                          <th>Computed?</th>
+                          <th>Avg Vol 30d</th>
+                          <th>
+                            <AcronymHint
+                              short="IV30/RV30"
+                              title="30-day Implied Volatility divided by 30-day Realized Volatility"
+                            />
+                          </th>
+                          <th>
+                            <AcronymHint short="TS" title="Term Structure" /> Slope 0→45
+                          </th>
+                          <th>Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preRejectedRows.map((row) => (
+                          <tr
+                            key={`${row.symbol}-${row.rejectionStage}-${row.rejectionCategory}`}
+                            className="row-invalid"
+                          >
+                            <td className="cell-emphasis">{row.symbol}</td>
+                            <td>{row.companyName}</td>
+                            <td>{row.nextEarningsDate ?? "—"}</td>
+                            <td>{row.earningsSession ?? "—"}</td>
+                            <td>
+                              <span className="status-pill">{row.rejectionCategory}</span>
+                            </td>
+                            <td>{row.rejectionStage}</td>
+                            <td>{row.verdict ?? "—"}</td>
+                            <td className="viability-cell">{row.wasComputed ? "Yes" : "No"}</td>
+                            <td>{asInteger(row.avgVolume30)}</td>
+                            <td>{asNumber(row.iv30Rv30)}</td>
+                            <td>{asNumber(row.tsSlope0To45)}</td>
+                            <td className="notes-cell">{row.rejectionReason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+
+                {preEarningsSubtab === "rejected" && !hasPreRejectedRows ? (
+                  <div className="empty-state empty-state--compact">
+                    <strong>No rejected tickers</strong>
+                    <span>Every evaluated ticker passed the available checks.</span>
+                  </div>
+                ) : null}
+              </section>
+            ) : !preRowsLoading ? (
+              <div className="empty-state">
+                <strong>Ready to evaluate earnings setups</strong>
+                <span>Run the scan to compare candidates and rejected tickers side by side.</span>
+              </div>
+            ) : null}
+          </section>
+        ) : (
+          <section className="panel">
+            <div className="section-header section-header--action">
+              <div>
+                <p className="eyebrow">Earnings calendar</p>
+                <h2>Plan entry and exit windows</h2>
+                <p className="section-description">
+                  Track announced earnings across the next three weeks with strategy timing attached.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="button-primary"
+                onClick={() => void loadUpcomingEarningsRows()}
+                disabled={upcomingRowsLoading}
+              >
+                {upcomingRowsLoading ? "Loading calendar..." : "Load earnings calendar"}
+              </button>
+            </div>
+
+            <div className="strategy-callout">
+              <span>Strategy timing</span>
+              <strong>Enter 15 minutes before close on earnings day</strong>
+              <span className="strategy-arrow" aria-hidden="true">
+                →
+              </span>
+              <strong>Exit 15 minutes after the next-day open</strong>
+            </div>
+
+            {upcomingRowsLoading ? <p className="notice notice--loading">Fetching announced earnings calendar...</p> : null}
+            {upcomingError ? <p className="error">{upcomingError}</p> : null}
+
+            {upcomingMeta ? (
+              <div className="summary-grid summary-grid--calendar">
+                <article>
+                  <span>Window</span>
+                  <strong>{upcomingMeta.daysAhead} days</strong>
+                  <small>Forward calendar range</small>
+                </article>
+                <article>
+                  <span>Announcements</span>
+                  <strong>{upcomingMeta.totalRows}</strong>
+                  <small>Confirmed earnings events</small>
+                </article>
+              </div>
+            ) : null}
+
+            {hasUpcomingRows ? (
+              <section className="results-section">
+                <div className="results-toolbar">
+                  <div>
+                    <h3>Upcoming announcements</h3>
+                    <p>{upcomingRows.length} scheduled events in the selected window.</p>
+                  </div>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Company</th>
+                        <th>Earnings Date</th>
+                        <th>Earnings Session</th>
+                        <th>Entry Timing</th>
+                        <th>Exit Timing</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {upcomingRows.map((row) => (
+                        <tr key={`${row.symbol}-${row.earningsDate}`}>
+                          <td className="cell-emphasis">{row.symbol}</td>
                           <td>{row.companyName}</td>
-                          <td>
-                            {row.shortTargetDte}/{row.longTargetDte}
-                          </td>
-                          <td>
-                            <button type="button" onClick={() => onToggleTopRow(row)} disabled={!canDrilldown}>
-                              {isExpanded ? "Hide" : "Details"}
-                            </button>
-                          </td>
-                          <td>{row.tradeClass ?? "—"}</td>
-                          <td>
-                            {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
-                          </td>
-                          <td>{row.nextEarningsDate ?? "—"}</td>
-                          <td>{asNumber(row.selectedStrike)}</td>
-                          <td>{asPct(row.ivShort)}</td>
-                          <td>{asPct(row.ivLong)}</td>
-                          <td>{asInteger(row.shortOpenInterest)}</td>
-                          <td>{asInteger(row.longOpenInterest)}</td>
-                          <td>{asPct(row.forwardVol)}</td>
-                          <td>{asPct(row.rawForwardVolEdge)}</td>
-                          <td>{asPct(row.adjustedForwardVolEdge)}</td>
-                          <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
-                          <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
-                          <td>{row.notes}</td>
+                          <td>{row.earningsDate}</td>
+                          <td>{row.earningsSession ?? "—"}</td>
+                          <td>{row.strategyEntry}</td>
+                          <td>{row.strategyExit}</td>
                         </tr>
-                        {isExpanded ? (
-                          <tr className="row-drilldown">
-                            <td colSpan={18}>
-                              <ForwardTradeDetailsPanel
-                                loading={analyticsLoading}
-                                error={analyticsError}
-                                analytics={analytics}
-                              />
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </section>
-          ) : null}
-        </>
-      ) : activeTab === "preearnings" ? (
-        <>
-          <section className="controls">
-            <button type="button" onClick={() => void loadPreEarningsRows()} disabled={preRowsLoading}>
-              {preRowsLoading ? "Scanning pre-earnings setups..." : "Find all pre-earnings viable trades"}
-            </button>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : !upcomingRowsLoading ? (
+              <div className="empty-state">
+                <strong>No calendar loaded</strong>
+                <span>Load announced earnings to prepare the next strategy window.</span>
+              </div>
+            ) : null}
           </section>
-
-          {preRowsLoading ? <p className="muted">Evaluating pre-earnings viability checks...</p> : null}
-          {!preRowsLoading && preMeta?.isWarming ? (
-            <p className="muted">
-              Background scan in progress... showing current cached results while more symbols are processed.
-            </p>
-          ) : null}
-          {preError ? <p className="error">{preError}</p> : null}
-          {!preRowsLoading && !preMeta ? (
-            <p className="muted">No pre-earnings viable trades found yet. Run the scan.</p>
-          ) : null}
-
-          {preMeta ? (
-            <p className="muted">
-              Scanned {preMeta.scannedSymbols} symbols, attempted {preMeta.evaluatedSymbols}, computed{" "}
-              {preMeta.computedSymbols}, viable {preMeta.viableSymbols}, rejected {preMeta.rejectedSymbols}
-              {preMeta.isComplete ? "." : " so far."}{" "}
-              Data as of <strong>{formatTimeAgo(preMeta.asOf)}</strong>
-              {preMeta.isStale ? " (cached quotes are refreshing)." : "."}
-            </p>
-          ) : null}
-
-          <section className="tabs">
-            <button
-              type="button"
-              className={preEarningsSubtab === "viable" ? "tab-active" : ""}
-              onClick={() => setPreEarningsSubtab("viable")}
-            >
-              Viable trades
-            </button>
-            <button
-              type="button"
-              className={preEarningsSubtab === "rejected" ? "tab-active" : ""}
-              onClick={() => setPreEarningsSubtab("rejected")}
-            >
-              Rejected tickers
-            </button>
-          </section>
-
-          {preEarningsSubtab === "viable" && hasPreRows ? (
-            <section className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Company</th>
-                    <th>Next Earnings</th>
-                    <th>Earnings Session</th>
-                    <th>Verdict</th>
-                    <th>Viable?</th>
-                    <th>Avg Vol 30d</th>
-                    <th>
-                      <AcronymHint short="IV30/RV30" title="30-day Implied Volatility divided by 30-day Realized Volatility" />
-                    </th>
-                    <th>
-                      <AcronymHint short="TS" title="Term Structure" /> Slope 0→45
-                    </th>
-                    <th>Avg Vol Check</th>
-                    <th>
-                      <AcronymHint short="IV30/RV30" title="30-day Implied Volatility divided by 30-day Realized Volatility" /> Check
-                    </th>
-                    <th>
-                      <AcronymHint short="TS" title="Term Structure" /> Slope Check
-                    </th>
-                    <th>Expected Move</th>
-                    <th>Quote Time</th>
-                    <th>Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preRows.map((row) => (
-                    <tr key={row.symbol} className={verdictClass(row)}>
-                      <td>{row.symbol}</td>
-                      <td>{row.companyName}</td>
-                      <td>{row.nextEarningsDate ?? "—"}</td>
-                      <td>{row.earningsSession ?? "—"}</td>
-                      <td>{row.verdict}</td>
-                      <td className="viability-cell">{row.isViable ? "Yes" : "No"}</td>
-                      <td>{asInteger(row.avgVolume30)}</td>
-                      <td>{asNumber(row.iv30Rv30)}</td>
-                      <td>{asNumber(row.tsSlope0To45)}</td>
-                      <td>{row.avgVolumePass ? "PASS" : "FAIL"}</td>
-                      <td>{row.iv30Rv30Pass ? "PASS" : "FAIL"}</td>
-                      <td>{row.tsSlopePass ? "PASS" : "FAIL"}</td>
-                      <td>{row.expectedMove ?? "—"}</td>
-                      <td>{row.quoteTime ? formatTimeAgo(row.quoteTime) : "—"}</td>
-                      <td>{row.notes}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          ) : null}
-
-          {preEarningsSubtab === "viable" && !preRowsLoading && !hasPreRows ? (
-            <p className="muted">No viable pre-earnings trades found in the latest scan.</p>
-          ) : null}
-
-          {preEarningsSubtab === "rejected" && hasPreRejectedRows ? (
-            <section className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Company</th>
-                    <th>Next Earnings</th>
-                    <th>Earnings Session</th>
-                    <th>Category</th>
-                    <th>Stage</th>
-                    <th>Verdict</th>
-                    <th>Computed?</th>
-                    <th>Avg Vol 30d</th>
-                    <th>
-                      <AcronymHint short="IV30/RV30" title="30-day Implied Volatility divided by 30-day Realized Volatility" />
-                    </th>
-                    <th>
-                      <AcronymHint short="TS" title="Term Structure" /> Slope 0→45
-                    </th>
-                    <th>Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preRejectedRows.map((row) => (
-                    <tr key={`${row.symbol}-${row.rejectionStage}-${row.rejectionCategory}`} className="row-invalid">
-                      <td>{row.symbol}</td>
-                      <td>{row.companyName}</td>
-                      <td>{row.nextEarningsDate ?? "—"}</td>
-                      <td>{row.earningsSession ?? "—"}</td>
-                      <td>{row.rejectionCategory}</td>
-                      <td>{row.rejectionStage}</td>
-                      <td>{row.verdict ?? "—"}</td>
-                      <td className="viability-cell">{row.wasComputed ? "Yes" : "No"}</td>
-                      <td>{asInteger(row.avgVolume30)}</td>
-                      <td>{asNumber(row.iv30Rv30)}</td>
-                      <td>{asNumber(row.tsSlope0To45)}</td>
-                      <td>{row.rejectionReason}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          ) : null}
-
-          {preEarningsSubtab === "rejected" && !preRowsLoading && !hasPreRejectedRows ? (
-            <p className="muted">No rejected tickers are available yet. Run the scan.</p>
-          ) : null}
-        </>
-      ) : (
-        <>
-          <section className="controls">
-            <button type="button" onClick={() => void loadUpcomingEarningsRows()} disabled={upcomingRowsLoading}>
-              {upcomingRowsLoading ? "Loading upcoming earnings..." : "Load upcoming announced earnings"}
-            </button>
-          </section>
-
-          <p className="muted">
-            Strategy timing: buy 15 minutes before close on earnings day, then sell 15 minutes after next-day open.
-          </p>
-
-          {upcomingRowsLoading ? <p className="muted">Fetching announced earnings calendar...</p> : null}
-          {upcomingError ? <p className="error">{upcomingError}</p> : null}
-          {!upcomingRowsLoading && !hasUpcomingRows ? (
-            <p className="muted">No upcoming announced earnings found yet. Load the calendar.</p>
-          ) : null}
-
-          {upcomingMeta ? (
-            <p className="muted">
-              Showing {upcomingRows.length} rows from the next {upcomingMeta.daysAhead} days ({upcomingMeta.totalRows}{" "}
-              total).
-            </p>
-          ) : null}
-
-          {hasUpcomingRows ? (
-            <section className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Company</th>
-                    <th>Earnings Date</th>
-                    <th>Earnings Session</th>
-                    <th>Entry Timing</th>
-                    <th>Exit Timing</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {upcomingRows.map((row) => (
-                    <tr key={`${row.symbol}-${row.earningsDate}`}>
-                      <td>{row.symbol}</td>
-                      <td>{row.companyName}</td>
-                      <td>{row.earningsDate}</td>
-                      <td>{row.earningsSession ?? "—"}</td>
-                      <td>{row.strategyEntry}</td>
-                      <td>{row.strategyExit}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          ) : null}
-        </>
-      )}
+        )}
+      </div>
     </main>
   );
 }
