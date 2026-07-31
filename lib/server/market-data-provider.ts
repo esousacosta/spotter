@@ -7,7 +7,15 @@ const S_AND_P_500_FALLBACK_URL =
   "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies";
 const CBOE_OPTIONS_URL = "https://cdn.cboe.com/api/global/delayed_quotes/options";
 const NASDAQ_HISTORICAL_URL = "https://api.nasdaq.com/api/quote";
-const CACHE_TTL_MS = 10 * 60 * 1000;
+const TICKER_CACHE_TTL_MS = 60 * 60 * 1000;
+const OPTION_CHAIN_CACHE_TTL_MS = 10 * 60 * 1000;
+const HISTORICAL_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const CBOE_REQUEST_GAP_MS = 800;
+const NASDAQ_REQUEST_GAP_MS = 25;
+const MAX_RATE_LIMIT_RETRIES = 3;
+
+const providerQueue = new Map<string, Promise<void>>();
+const providerNextAllowedMs = new Map<string, number>();
 
 type CboeOptionRow = {
   option?: string;
@@ -56,25 +64,88 @@ type ParsedCboeChain = {
   volume: number | null;
 };
 
-async function fetchText(url: string): Promise<string> {
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(10_000),
-    headers: {
-      "User-Agent": "Mozilla/5.0",
-      Accept: "application/json, text/plain, */*",
-    },
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Market data request failed (${response.status}): ${body.slice(0, 240)}`);
-  }
-
-  return response.text();
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const body = await fetchText(url);
+async function waitForProviderSlot(provider: string, minGapMs: number): Promise<void> {
+  const previous = providerQueue.get(provider) ?? Promise.resolve();
+  const scheduled = previous.then(async () => {
+    const now = Date.now();
+    const nextAllowed = providerNextAllowedMs.get(provider) ?? now;
+    const waitMs = Math.max(0, nextAllowed - now);
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+    providerNextAllowedMs.set(provider, Date.now() + minGapMs);
+  });
+
+  providerQueue.set(provider, scheduled.catch(() => undefined));
+  await scheduled;
+}
+
+function parseRetryAfterMs(headerValue: string | null): number | null {
+  if (!headerValue) {
+    return null;
+  }
+
+  const asSeconds = Number(headerValue);
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+    return asSeconds * 1000;
+  }
+
+  const retryAt = Date.parse(headerValue);
+  if (!Number.isFinite(retryAt)) {
+    return null;
+  }
+
+  return Math.max(0, retryAt - Date.now());
+}
+
+async function fetchText(
+  url: string,
+  options: { provider: string; minGapMs: number },
+): Promise<string> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt += 1) {
+    await waitForProviderSlot(options.provider, options.minGapMs);
+
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "application/json, text/plain, */*",
+      },
+    });
+
+    if (response.ok) {
+      return response.text();
+    }
+
+    const body = await response.text();
+    if (response.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+      const retryAfterMs =
+        parseRetryAfterMs(response.headers.get("retry-after")) ?? 2_000 * 2 ** attempt;
+      providerNextAllowedMs.set(
+        options.provider,
+        Math.max(providerNextAllowedMs.get(options.provider) ?? 0, Date.now() + retryAfterMs),
+      );
+      lastError = new Error(`${options.provider} request failed (429): ${body.slice(0, 240)}`);
+      continue;
+    }
+
+    throw new Error(`${options.provider} request failed (${response.status}): ${body.slice(0, 240)}`);
+  }
+
+  throw lastError ?? new Error(`${options.provider} request failed after retries.`);
+}
+
+async function fetchJson<T>(
+  url: string,
+  options: { provider: string; minGapMs: number },
+): Promise<T> {
+  const body = await fetchText(url, options);
   return JSON.parse(body) as T;
 }
 
@@ -214,9 +285,10 @@ function parseOccOptionSymbol(
 }
 
 async function loadCboeChain(symbol: string): Promise<ParsedCboeChain> {
-  return getCached(`cboe-chain:${symbol}`, CACHE_TTL_MS, async () => {
+  return getCached(`cboe-chain:${symbol}`, OPTION_CHAIN_CACHE_TTL_MS, async () => {
     const payload = await fetchJson<CboeOptionsResponse>(
       `${CBOE_OPTIONS_URL}/${encodeURIComponent(symbol)}.json`,
+      { provider: "Cboe options", minGapMs: CBOE_REQUEST_GAP_MS },
     );
 
     const data = payload.data;
@@ -318,6 +390,7 @@ async function fetchNasdaqHistoricalBars(symbol: string, limit = 90): Promise<Hi
 
   const payload = await fetchJson<NasdaqHistoricalResponse>(
     `${NASDAQ_HISTORICAL_URL}/${encodeURIComponent(symbol)}/historical?assetclass=stocks&fromdate=${fromDate}&todate=${toDate}&limit=${limit}`,
+    { provider: "Nasdaq historical", minGapMs: NASDAQ_REQUEST_GAP_MS },
   );
 
   const rows = payload.data?.tradesTable?.rows ?? [];
@@ -355,12 +428,18 @@ async function fetchNasdaqHistoricalBars(symbol: string, limit = 90): Promise<Hi
 
 export const marketDataProvider = {
   async getSP500Tickers(): Promise<Ticker[]> {
-    return getCached("sp500-tickers", CACHE_TTL_MS, async () => {
+    return getCached("sp500-tickers", TICKER_CACHE_TTL_MS, async () => {
       try {
-        const csv = await fetchText(S_AND_P_500_PRIMARY_URL);
+        const csv = await fetchText(S_AND_P_500_PRIMARY_URL, {
+          provider: "S&P constituents CSV",
+          minGapMs: 0,
+        });
         return parseConstituentCsv(csv);
       } catch {
-        const html = await fetchText(S_AND_P_500_FALLBACK_URL);
+        const html = await fetchText(S_AND_P_500_FALLBACK_URL, {
+          provider: "Wikipedia constituents fallback",
+          minGapMs: 0,
+        });
         return parseFallbackWikipediaTable(html);
       }
     });
@@ -387,7 +466,7 @@ export const marketDataProvider = {
   },
 
   async getHistoricalDailyBars(symbol: string, limit = 90): Promise<HistoricalDailyBar[]> {
-    return getCached(`nasdaq-hist:${symbol}:${limit}`, CACHE_TTL_MS, async () =>
+    return getCached(`nasdaq-hist:${symbol}:${limit}`, HISTORICAL_CACHE_TTL_MS, async () =>
       fetchNasdaqHistoricalBars(symbol, limit),
     );
   },

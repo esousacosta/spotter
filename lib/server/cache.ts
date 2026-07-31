@@ -4,6 +4,7 @@ type CacheEntry<T> = {
 };
 
 const memoryCache = new Map<string, CacheEntry<unknown>>();
+const inflightLoads = new Map<string, Promise<unknown>>();
 
 export async function getCached<T>(
   key: string,
@@ -17,7 +18,22 @@ export async function getCached<T>(
     return existing.value as T;
   }
 
-  const value = await loader();
-  memoryCache.set(key, { value, expiresAtMs: now + ttlMs });
-  return value;
+  const inflight = inflightLoads.get(key);
+  if (inflight) {
+    return inflight as Promise<T>;
+  }
+
+  const loadPromise = loader()
+    .then((value) => {
+      memoryCache.set(key, { value, expiresAtMs: Date.now() + ttlMs });
+      inflightLoads.delete(key);
+      return value;
+    })
+    .catch((error) => {
+      inflightLoads.delete(key);
+      throw error;
+    });
+
+  inflightLoads.set(key, loadPromise);
+  return loadPromise;
 }

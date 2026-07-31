@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type {
   ForwardVolResponse,
+  PreEarningsRejectedRow,
   PreEarningsRow,
   RankedForwardVolRow,
   Ticker,
@@ -48,6 +49,7 @@ function verdictClass(row: PreEarningsRow): string {
 
 export function SpotterApp() {
   const [activeTab, setActiveTab] = useState<"forward" | "preearnings" | "upcomingearnings">("forward");
+  const [preEarningsSubtab, setPreEarningsSubtab] = useState<"viable" | "rejected">("viable");
   const [tickers, setTickers] = useState<Ticker[]>([]);
   const [symbol, setSymbol] = useState<string>(DEFAULT_SYMBOL);
   const [data, setData] = useState<ForwardVolResponse | null>(null);
@@ -57,11 +59,16 @@ export function SpotterApp() {
     successfulSymbols: number;
   } | null>(null);
   const [preRows, setPreRows] = useState<PreEarningsRow[]>([]);
+  const [preRejectedRows, setPreRejectedRows] = useState<PreEarningsRejectedRow[]>([]);
   const [upcomingRows, setUpcomingRows] = useState<UpcomingEarningsRow[]>([]);
   const [preMeta, setPreMeta] = useState<{
     scannedSymbols: number;
     evaluatedSymbols: number;
+    computedSymbols: number;
     viableSymbols: number;
+    rejectedSymbols: number;
+    isComplete: boolean;
+    isWarming: boolean;
   } | null>(null);
   const [upcomingMeta, setUpcomingMeta] = useState<{
     daysAhead: number;
@@ -143,9 +150,22 @@ export function SpotterApp() {
     void loadForwardVol();
   }, [symbol]);
 
+  useEffect(() => {
+    if (activeTab !== "preearnings" || !preMeta?.isWarming) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void loadPreEarningsRows(true);
+    }, 3000);
+
+    return () => window.clearTimeout(timeout);
+  }, [activeTab, preMeta?.isWarming]);
+
   const hasRows = useMemo(() => (data?.rows.length ?? 0) > 0, [data?.rows.length]);
   const hasTopRows = useMemo(() => topRows.length > 0, [topRows.length]);
   const hasPreRows = useMemo(() => preRows.length > 0, [preRows.length]);
+  const hasPreRejectedRows = useMemo(() => preRejectedRows.length > 0, [preRejectedRows.length]);
   const hasUpcomingRows = useMemo(() => upcomingRows.length > 0, [upcomingRows.length]);
 
   async function loadTopRows() {
@@ -180,9 +200,11 @@ export function SpotterApp() {
     }
   }
 
-  async function loadPreEarningsRows() {
-    setPreRowsLoading(true);
-    setPreError(null);
+  async function loadPreEarningsRows(silent = false) {
+    if (!silent) {
+      setPreRowsLoading(true);
+      setPreError(null);
+    }
 
     try {
       const response = await fetch("/api/pre-earnings-viable", {
@@ -198,18 +220,26 @@ export function SpotterApp() {
       }
 
       setPreRows(payload.rows);
+      setPreRejectedRows(payload.rejectedRows);
       setPreMeta({
         scannedSymbols: payload.scannedSymbols,
         evaluatedSymbols: payload.evaluatedSymbols,
+        computedSymbols: payload.computedSymbols,
         viableSymbols: payload.viableSymbols,
+        rejectedSymbols: payload.rejectedSymbols,
+        isComplete: payload.isComplete,
+        isWarming: payload.isWarming,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load pre-earnings trades.";
       setPreError(message);
       setPreRows([]);
+      setPreRejectedRows([]);
       setPreMeta(null);
     } finally {
-      setPreRowsLoading(false);
+      if (!silent) {
+        setPreRowsLoading(false);
+      }
     }
   }
 
@@ -441,19 +471,42 @@ export function SpotterApp() {
           </section>
 
           {preRowsLoading ? <p className="muted">Evaluating pre-earnings viability checks...</p> : null}
+          {!preRowsLoading && preMeta?.isWarming ? (
+            <p className="muted">
+              Background scan in progress... showing current cached results while more symbols are processed.
+            </p>
+          ) : null}
           {preError ? <p className="error">{preError}</p> : null}
-          {!preRowsLoading && !hasPreRows ? (
+          {!preRowsLoading && !preMeta ? (
             <p className="muted">No pre-earnings viable trades found yet. Run the scan.</p>
           ) : null}
 
           {preMeta ? (
             <p className="muted">
-              Scanned {preMeta.scannedSymbols} symbols, evaluated {preMeta.evaluatedSymbols}, viable{" "}
-              {preMeta.viableSymbols}.
+              Scanned {preMeta.scannedSymbols} symbols, attempted {preMeta.evaluatedSymbols}, computed{" "}
+              {preMeta.computedSymbols}, viable {preMeta.viableSymbols}, rejected {preMeta.rejectedSymbols}
+              {preMeta.isComplete ? "." : " so far."}
             </p>
           ) : null}
 
-          {hasPreRows ? (
+          <section className="tabs">
+            <button
+              type="button"
+              className={preEarningsSubtab === "viable" ? "tab-active" : ""}
+              onClick={() => setPreEarningsSubtab("viable")}
+            >
+              Viable trades
+            </button>
+            <button
+              type="button"
+              className={preEarningsSubtab === "rejected" ? "tab-active" : ""}
+              onClick={() => setPreEarningsSubtab("rejected")}
+            >
+              Rejected tickers
+            </button>
+          </section>
+
+          {preEarningsSubtab === "viable" && hasPreRows ? (
             <section className="table-wrap">
               <table>
                 <thead>
@@ -496,6 +549,55 @@ export function SpotterApp() {
                 </tbody>
               </table>
             </section>
+          ) : null}
+
+          {preEarningsSubtab === "viable" && !preRowsLoading && !hasPreRows ? (
+            <p className="muted">No viable pre-earnings trades found in the latest scan.</p>
+          ) : null}
+
+          {preEarningsSubtab === "rejected" && hasPreRejectedRows ? (
+            <section className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Company</th>
+                    <th>Next Earnings</th>
+                    <th>Earnings Session</th>
+                    <th>Category</th>
+                    <th>Stage</th>
+                    <th>Verdict</th>
+                    <th>Computed?</th>
+                    <th>Avg Vol 30d</th>
+                    <th>IV30/RV30</th>
+                    <th>TS Slope 0→45</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preRejectedRows.map((row) => (
+                    <tr key={`${row.symbol}-${row.rejectionStage}-${row.rejectionCategory}`} className="row-invalid">
+                      <td>{row.symbol}</td>
+                      <td>{row.companyName}</td>
+                      <td>{row.nextEarningsDate ?? "—"}</td>
+                      <td>{row.earningsSession ?? "—"}</td>
+                      <td>{row.rejectionCategory}</td>
+                      <td>{row.rejectionStage}</td>
+                      <td>{row.verdict ?? "—"}</td>
+                      <td className="viability-cell">{row.wasComputed ? "Yes" : "No"}</td>
+                      <td>{asInteger(row.avgVolume30)}</td>
+                      <td>{asNumber(row.iv30Rv30)}</td>
+                      <td>{asNumber(row.tsSlope0To45)}</td>
+                      <td>{row.rejectionReason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          ) : null}
+
+          {preEarningsSubtab === "rejected" && !preRowsLoading && !hasPreRejectedRows ? (
+            <p className="muted">No rejected tickers are available yet. Run the scan.</p>
           ) : null}
         </>
       ) : (

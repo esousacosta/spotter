@@ -14,6 +14,7 @@ import {
   evaluateEarningsExposedAdjustedEdge,
   validateExEarningsSafeguards,
 } from "@/lib/earnings-filter";
+import { getMarketDateIso } from "@/lib/market-time";
 import type { EarningsInfo } from "@/lib/server/earnings-provider";
 import { marketDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
 import type { ForwardVolRow, TargetPair } from "@/lib/types";
@@ -206,7 +207,7 @@ export async function computeForwardVolRowsForSymbol(
 
       if (earningsDecision.state === "earnings-exposed-post") {
         const earningsDate = earningsInfo?.nextEarningsDate ?? null;
-        const todayIso = now.toISOString().slice(0, 10);
+        const todayIso = getMarketDateIso(now);
         const anchorExpiryUnix =
           earningsDate !== null
             ? pickLastExpiryBeforeEarnings(snapshot.expirations, earningsDate)

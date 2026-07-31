@@ -95,11 +95,10 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
   Request body:
   ```json
   {
-    "topN": 10,
-    "scanLimit": 120
+    "topN": 10
   }
   ```
-  Scans a configurable subset of S&P 500 symbols for pre-earnings setups using the calculator logic (`avg_volume`, `iv30_rv30`, `ts_slope_0_45`) and returns top viable trades, now including `nextEarningsDate` and `earningsSession` per row.
+  Scans the full S&P 500 universe by default for pre-earnings setups using the calculator logic (`avg_volume`, `iv30_rv30`, `ts_slope_0_45`) and returns top viable trades, plus a rejected-tickers list with explicit rejection reasons. Viable and rejected rows include `nextEarningsDate` and `earningsSession`. `scanLimit` remains optional if you want to cap the scan manually.
 
 - `POST /api/upcoming-earnings`  
   Request body:
@@ -115,8 +114,13 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 - Option-chain market data is pulled from the Cboe delayed quotes API.
 - Earnings calendar data is pulled from Nasdaq's earnings calendar API.
+- Historical bars for RV30 / average-volume checks are pulled from Nasdaq's historical quote API.
 - S&P 500 constituents are fetched from the datasets/s-and-p-500-companies GitHub dataset (CSV), with a Wikipedia fallback.
-- Responses are cached in memory for 10 minutes to reduce repeated provider calls.
+- Option-chain responses are cached in memory for 10 minutes; historical-bar responses are cached for 6 hours; ticker metadata is cached for 1 hour.
+- The market-data client now applies provider-specific pacing and retry/backoff when Cboe or Nasdaq return rate-limit responses.
+- The pre-earnings universe scan is warmed in the background after the app loads the ticker list, so later button clicks usually reuse a shared cached scan instead of launching a cold full-universe sweep.
+- The expensive market-data portion of the pre-earnings scan is limited to symbols with an announced earnings date in the next 21 calendar days; other symbols are rejected immediately as outside the current strategy window.
+- The pre-earnings scan endpoint now returns the **latest cached snapshot immediately** while a background scan continues warming, instead of blocking the button until the full universe finishes.
 
 ## Testing
 

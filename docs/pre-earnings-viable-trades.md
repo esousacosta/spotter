@@ -30,22 +30,23 @@ This feature is independent from the Forward Volatility tab and does not alter t
 
 ```json
 {
-  "topN": 10,
-  "scanLimit": 120
+  "topN": 10
 }
 ```
 
 - `topN` (optional): max rows returned, default `10`, max `50`
-- `scanLimit` (optional): number of S&P 500 symbols scanned, default `120`, max `500`
+- `scanLimit` (optional): number of S&P 500 symbols scanned; if omitted, the endpoint scans the full S&P 500 universe. Max `500`.
 
 ### Response shape
 
 ```json
 {
   "asOf": "2026-07-30T20:53:59.761Z",
-  "scannedSymbols": 120,
-  "evaluatedSymbols": 120,
+  "scannedSymbols": 503,
+  "evaluatedSymbols": 503,
+  "computedSymbols": 61,
   "viableSymbols": 35,
+  "rejectedSymbols": 468,
   "rows": [
     {
       "symbol": "AAPL",
@@ -64,6 +65,27 @@ This feature is independent from the Forward Volatility tab and does not alter t
       "isViable": true,
       "notes": "Consider: term-structure check passed with one supporting signal."
     }
+  ],
+  "rejectedRows": [
+    {
+      "symbol": "XYZ",
+      "companyName": "Example Inc.",
+      "nextEarningsDate": "2026-08-01",
+      "earningsSession": "After Market Close",
+      "rejectionCategory": "criteria",
+      "rejectionStage": "Viability rules",
+      "rejectionReason": "Rejected by viability rules: IV30/RV30 1.11 is below the 1.25 threshold.",
+      "wasComputed": true,
+      "underlyingPrice": 103.4,
+      "expectedMove": "3.12%",
+      "avgVolume30": 4200000,
+      "iv30Rv30": 1.11,
+      "tsSlope0To45": -0.008,
+      "avgVolumePass": true,
+      "iv30Rv30Pass": false,
+      "tsSlopePass": true,
+      "verdict": "avoid"
+    }
   ]
 }
 ```
@@ -79,6 +101,29 @@ Intuition (newcomer view):
 
 - These fields answer **“When is the catalyst?”** and **“Which part of the day is it scheduled for?”**
 - They do not replace the viability indicators, but they make it easier to align execution timing with the event.
+
+---
+
+## Rejected tickers subtab
+
+The **Rejected tickers** subtab shows every scanned symbol that did **not** make the viable list, together with the rejection cause.
+
+### What appears there
+
+1. **Criteria rejections**: the symbol was fully computed, but its verdict was `avoid`.
+2. **Data rejections**: the symbol could not be fully computed because required expiries, IV points, historical bars, or other market data were missing or invalid.
+
+### Main fields
+
+- `rejectionCategory`: either `criteria` or `data`
+- `rejectionStage`: where the pipeline rejected the symbol
+- `rejectionReason`: human-readable explanation of the rejection
+- `wasComputed`: whether the symbol made it through the full indicator pipeline before being rejected
+
+Intuition (newcomer view):
+
+- This subtab answers **“Why didn’t this ticker make the cut?”**
+- It helps distinguish **bad setup quality** from **missing or insufficient data**.
 
 ---
 
@@ -116,8 +161,10 @@ The app includes a dedicated **Upcoming announced earnings** tab that lists anno
 ## End-to-end flow
 
 1. Load S&P 500 symbols.
-2. Scan up to `scanLimit` symbols (bounded-concurrency workers).
-3. For each symbol:
+2. Start a background warmup of the full pre-earnings scan as soon as the app loads tickers.
+3. Scan the full S&P 500 universe by default, or up to `scanLimit` symbols when a manual cap is provided (bounded-concurrency workers). The button reuses the shared warmed scan when available.
+4. Reject symbols with no announced earnings date, or with earnings beyond the next 21 calendar days, before making the expensive market-data requests.
+5. For each remaining in-window symbol:
    1. Fetch spot and option expirations.
    2. Filter expirations to near-term set ending at the first expiry with `DTE >= 45`.
    3. For each selected expiry, fetch calls and puts.
@@ -130,8 +177,8 @@ The app includes a dedicated **Upcoming announced earnings** tab that lists anno
       - 30-day average volume
       - expected move from first-expiry ATM straddle midprice.
    8. Evaluate pass/fail checks and assign verdict.
-4. Keep only viable rows (`recommended` or `consider`).
-5. Rank rows and return top `N`.
+6. Keep only viable rows (`recommended` or `consider`).
+7. Rank rows and return top `N`.
 
 ---
 
@@ -252,11 +299,15 @@ All other combinations.
 
 Returned rows are ranked by:
 
-1. Verdict priority: `recommended > consider > avoid`
-2. Higher `iv30Rv30`
-3. More favorable slope (more negative `tsSlope0To45`)
+1. **Announced earnings today first** (using the US market calendar date)
+2. Then earliest announced earnings date
+3. Verdict priority: `recommended > consider > avoid`
+4. Higher `iv30Rv30`
+5. More favorable slope (more negative `tsSlope0To45`)
 
 Only viable rows are included in the endpoint output.
+
+Rejected rows are returned separately in `rejectedRows`.
 
 ---
 
@@ -266,6 +317,14 @@ Only viable rows are included in the endpoint output.
 - Historical OHLCV: Nasdaq historical quote API
 - Universe list: S&P 500 constituents dataset (+ fallback)
 
+## Performance safeguards
+
+- In-flight cache deduplication prevents the same symbol from triggering duplicate concurrent option-chain fetches.
+- The full-universe pre-earnings scan is cached in memory for a short interval and reused across button clicks.
+- The app warms that shared scan in the background right after ticker load, which spreads requests over time instead of concentrating them on button click.
+- Symbols outside the current 21-day announced-earnings window are rejected before any option-chain or historical-bar fetches happen.
+- The scan endpoint returns the latest cached snapshot immediately and the UI polls for refreshes while the background scan is still running, so the button does not wait for the full scan to complete.
+
 ---
 
 ## Error handling model
@@ -274,7 +333,16 @@ Per-symbol failures are isolated:
 
 - If a symbol cannot produce sufficient data, it is skipped.
 - The scan continues for remaining symbols.
-- `evaluatedSymbols` counts symbols that reached computed results.
+- `evaluatedSymbols` counts symbols that were attempted by the scanner.
+- `computedSymbols` counts symbols that made it all the way through the data pipeline and produced a computed pre-earnings row.
+- `rejectedSymbols` counts symbols returned in the rejected-tickers list.
+
+Common reasons a symbol is attempted but not computed:
+
+- no usable near-term option expiries after filtering,
+- not enough expiries with valid ATM call/put IV data,
+- insufficient valid historical bars for RV30 / average-volume inputs,
+- provider request failures for options or historical data.
 
 ---
 

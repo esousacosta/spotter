@@ -1,4 +1,5 @@
 import { getCached } from "@/lib/server/cache";
+import { getMarketDateIso } from "@/lib/market-time";
 
 const NASDAQ_EARNINGS_URL = "https://api.nasdaq.com/api/calendar/earnings";
 const EARNINGS_CACHE_TTL_MS = 15 * 60 * 1000;
@@ -88,7 +89,7 @@ export async function getNextEarningsForSymbols(
 ): Promise<Map<string, EarningsInfo>> {
   const normalizedSymbols = [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()))];
   const horizonDays = computeHorizonDays(shortTargetDtes);
-  const startIso = toIsoDate(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())));
+  const startIso = getMarketDateIso(now);
   const cacheKey = `earnings:${startIso}:h${horizonDays}`;
 
   const baseMap = await getCached(cacheKey, EARNINGS_CACHE_TTL_MS, async () => {
@@ -156,7 +157,7 @@ export async function getUpcomingEarningsEvents(
   now: Date = new Date(),
 ): Promise<UpcomingEarningsEvent[]> {
   const boundedDaysAhead = Math.max(1, Math.min(daysAhead, 60));
-  const startIso = toIsoDate(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())));
+  const startIso = getMarketDateIso(now);
   const cacheKey = `earnings-upcoming:${startIso}:d${boundedDaysAhead}`;
 
   const rowsByDate = await getCached(cacheKey, EARNINGS_CACHE_TTL_MS, async () => {

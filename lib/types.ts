@@ -69,12 +69,37 @@ export type PreEarningsRow = {
   notes: string;
 };
 
+export type PreEarningsRejectedRow = {
+  symbol: string;
+  companyName: string;
+  nextEarningsDate: string | null;
+  earningsSession: string | null;
+  rejectionCategory: "data" | "criteria";
+  rejectionStage: string;
+  rejectionReason: string;
+  wasComputed: boolean;
+  underlyingPrice: number | null;
+  expectedMove: string | null;
+  avgVolume30: number | null;
+  iv30Rv30: number | null;
+  tsSlope0To45: number | null;
+  avgVolumePass: boolean | null;
+  iv30Rv30Pass: boolean | null;
+  tsSlopePass: boolean | null;
+  verdict: PreEarningsVerdict | null;
+};
+
 export type TopPreEarningsResponse = {
   asOf: string;
   scannedSymbols: number;
   evaluatedSymbols: number;
+  computedSymbols: number;
   viableSymbols: number;
+  rejectedSymbols: number;
+  isComplete: boolean;
+  isWarming: boolean;
   rows: PreEarningsRow[];
+  rejectedRows: PreEarningsRejectedRow[];
 };
 
 export type UpcomingEarningsRow = {

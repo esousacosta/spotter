@@ -11,6 +11,12 @@
 - Completed hardening: ex-earnings IV safeguards (anchor validity/liquidity, anchor distance and tenor-gap caps, leg/event alignment checks, multi-event window rejection, and explicit baseline-conflict handling).
 - Completed feature: separate "Pre-earnings viable trades" tab and API scan using calculator-style viability checks (`avg_volume`, `iv30_rv30`, `ts_slope_0_45`).
 - Completed documentation: detailed technical reference for pre-earnings feature (`docs/pre-earnings-viable-trades.md`).
+- Completed fix: pre-earnings ranking now prioritizes announced earnings for the current US market date, and earnings-day comparisons use the market calendar instead of raw UTC dates.
+- Completed feature: pre-earnings scan now exposes a rejected-tickers subtab with explicit per-symbol rejection reasons, separating data failures from rule-based `avoid` verdicts.
+- Completed hardening: market-data requests now identify the exact provider in errors and apply provider-specific pacing plus retry/backoff to reduce Cloudflare/Nasdaq rate-limit failures during full-universe scans.
+- Completed performance fix: pre-earnings scan now deduplicates in-flight cache loads, warms the full-universe scan in the background right after ticker load, and reuses a shared cached scan so button clicks do not trigger a cold request burst.
+- Completed performance fix: the pre-earnings scan now rejects symbols outside the 21-day announced-earnings window before any expensive option/history fetches, which sharply reduces cold-scan latency.
+- Completed UX/performance fix: the pre-earnings endpoint now returns immediately with the latest cached snapshot while a background scan continues, and the UI auto-refreshes progress instead of blocking the button until the full scan completes.
 - Remaining from original roadmap: deeper reliability controls (retry policy), richer integration tests, and optional provider abstraction for a paid production feed.
 
 ## 1. Goal

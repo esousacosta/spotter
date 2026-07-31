@@ -1,6 +1,12 @@
 import { marketDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
 import type { EarningsInfo } from "@/lib/server/earnings-provider";
-import type { PreEarningsRow, PreEarningsVerdict, Ticker } from "@/lib/types";
+import { getMarketDateIso } from "@/lib/market-time";
+import type {
+  PreEarningsRejectedRow,
+  PreEarningsRow,
+  PreEarningsVerdict,
+  Ticker,
+} from "@/lib/types";
 
 const MIN_AVG_VOLUME = 1_500_000;
 const MIN_IV30_RV30 = 1.25;
@@ -11,7 +17,7 @@ function daysToExpiry(expiryUnix: number, now: Date): number {
 }
 
 function filterExpiries(expirationsUnix: number[], now: Date): number[] {
-  const todayIso = now.toISOString().slice(0, 10);
+  const todayIso = getMarketDateIso(now);
   const sorted = expirationsUnix
     .map((expiryUnix) => ({
       expiryUnix,
@@ -151,15 +157,83 @@ function verdictFromFlags(input: {
   return "avoid";
 }
 
+function baseRejectedRow(
+  ticker: Ticker,
+  earningsInfo: EarningsInfo | null,
+  overrides: Omit<
+    PreEarningsRejectedRow,
+    "symbol" | "companyName" | "nextEarningsDate" | "earningsSession"
+  >,
+): PreEarningsRejectedRow {
+  return {
+    symbol: ticker.symbol,
+    companyName: ticker.name,
+    nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
+    earningsSession: earningsInfo?.releaseSession ?? null,
+    ...overrides,
+  };
+}
+
+function describeAvoidReason(input: {
+  avgVolume30: number;
+  iv30Rv30: number;
+  tsSlope0To45: number;
+  avgVolumePass: boolean;
+  iv30Rv30Pass: boolean;
+  tsSlopePass: boolean;
+}): string {
+  const reasons: string[] = [];
+
+  if (!input.avgVolumePass) {
+    reasons.push(
+      `30-day average volume ${Math.round(input.avgVolume30).toLocaleString()} is below the 1.5M threshold.`,
+    );
+  }
+  if (!input.iv30Rv30Pass) {
+    reasons.push(`IV30/RV30 ${input.iv30Rv30.toFixed(2)} is below the 1.25 threshold.`);
+  }
+  if (!input.tsSlopePass) {
+    reasons.push(
+      `Term-structure slope ${input.tsSlope0To45.toFixed(5)} is not negative enough (must be <= -0.00406).`,
+    );
+  }
+
+  return reasons.length > 0
+    ? `Rejected by viability rules: ${reasons.join(" ")}`
+    : "Rejected by viability rules.";
+}
+
+export type PreEarningsScanResult =
+  | { outcome: "viable"; row: PreEarningsRow }
+  | { outcome: "rejected"; row: PreEarningsRejectedRow };
+
 export async function computePreEarningsRow(
   ticker: Ticker,
   earningsInfo: EarningsInfo | null = null,
   now: Date = new Date(),
-): Promise<PreEarningsRow | null> {
+): Promise<PreEarningsScanResult> {
   const snapshot = await marketDataProvider.getOptionSnapshot(ticker.symbol);
   const filteredExpiries = filterExpiries(snapshot.expirations, now);
   if (filteredExpiries.length === 0) {
-    return null;
+    return {
+      outcome: "rejected",
+      row: baseRejectedRow(ticker, earningsInfo, {
+        rejectionCategory: "data",
+        rejectionStage: "Option expiries",
+        rejectionReason:
+          "No usable near-term expiries remained after excluding same-day expiry and requiring coverage out to at least 45 DTE.",
+        wasComputed: false,
+        underlyingPrice: snapshot.spotPrice,
+        expectedMove: null,
+        avgVolume30: null,
+        iv30Rv30: null,
+        tsSlope0To45: null,
+        avgVolumePass: null,
+        iv30Rv30Pass: null,
+        tsSlopePass: null,
+        verdict: null,
+      }),
+    };
   }
 
   const chains = await Promise.all(
@@ -203,14 +277,50 @@ export async function computePreEarningsRow(
   }
 
   if (dtes.length < 2) {
-    return null;
+    return {
+      outcome: "rejected",
+      row: baseRejectedRow(ticker, earningsInfo, {
+        rejectionCategory: "data",
+        rejectionStage: "ATM IV term structure",
+        rejectionReason:
+          "Fewer than two expiries had valid ATM call/put implied volatility, so the term structure could not be built.",
+        wasComputed: false,
+        underlyingPrice: snapshot.spotPrice,
+        expectedMove,
+        avgVolume30: null,
+        iv30Rv30: null,
+        tsSlope0To45: null,
+        avgVolumePass: null,
+        iv30Rv30Pass: null,
+        tsSlopePass: null,
+        verdict: null,
+      }),
+    };
   }
 
   const term = termLinear(dtes, ivs);
   const firstDte = Math.min(...dtes);
   const slopeDenominator = 45 - firstDte;
   if (Math.abs(slopeDenominator) < 1e-8) {
-    return null;
+    return {
+      outcome: "rejected",
+      row: baseRejectedRow(ticker, earningsInfo, {
+        rejectionCategory: "data",
+        rejectionStage: "Slope calculation",
+        rejectionReason:
+          "The earliest valid expiry landed too close to 45 DTE, so the 0→45 slope could not be computed reliably.",
+        wasComputed: false,
+        underlyingPrice: snapshot.spotPrice,
+        expectedMove,
+        avgVolume30: null,
+        iv30Rv30: null,
+        tsSlope0To45: null,
+        avgVolumePass: null,
+        iv30Rv30Pass: null,
+        tsSlopePass: null,
+        verdict: null,
+      }),
+    };
   }
   const tsSlope0To45 = (term(45) - term(firstDte)) / slopeDenominator;
 
@@ -226,12 +336,48 @@ export async function computePreEarningsRow(
     252,
   );
   if (!rv30 || rv30 <= 0) {
-    return null;
+    return {
+      outcome: "rejected",
+      row: baseRejectedRow(ticker, earningsInfo, {
+        rejectionCategory: "data",
+        rejectionStage: "Historical volatility",
+        rejectionReason:
+          "The app could not compute a valid 30-day realized volatility value from the historical bars.",
+        wasComputed: false,
+        underlyingPrice: snapshot.spotPrice,
+        expectedMove,
+        avgVolume30: null,
+        iv30Rv30: null,
+        tsSlope0To45,
+        avgVolumePass: null,
+        iv30Rv30Pass: null,
+        tsSlopePass: null,
+        verdict: null,
+      }),
+    };
   }
 
   const recentVolumes = bars.slice(-30).map((bar) => bar.volume);
   if (recentVolumes.length < 30) {
-    return null;
+    return {
+      outcome: "rejected",
+      row: baseRejectedRow(ticker, earningsInfo, {
+        rejectionCategory: "data",
+        rejectionStage: "Volume history",
+        rejectionReason:
+          "Fewer than 30 valid daily volume observations were available, so the average-volume filter could not be evaluated.",
+        wasComputed: false,
+        underlyingPrice: snapshot.spotPrice,
+        expectedMove,
+        avgVolume30: null,
+        iv30Rv30: null,
+        tsSlope0To45,
+        avgVolumePass: null,
+        iv30Rv30Pass: null,
+        tsSlopePass: null,
+        verdict: null,
+      }),
+    };
   }
 
   const avgVolume30 =
@@ -243,7 +389,7 @@ export async function computePreEarningsRow(
   const tsSlopePass = tsSlope0To45 <= MAX_TS_SLOPE_0_45;
   const verdict = verdictFromFlags({ avgVolumePass, iv30Rv30Pass, tsSlopePass });
 
-  return {
+  const row: PreEarningsRow = {
     symbol: ticker.symbol,
     companyName: ticker.name,
     nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
@@ -264,5 +410,38 @@ export async function computePreEarningsRow(
         : verdict === "consider"
           ? "Consider: term-structure check passed with one supporting signal."
           : "Avoid: pre-earnings viability checks did not pass.",
+  };
+
+  if (verdict === "avoid") {
+    return {
+      outcome: "rejected",
+      row: baseRejectedRow(ticker, earningsInfo, {
+        rejectionCategory: "criteria",
+        rejectionStage: "Viability rules",
+        rejectionReason: describeAvoidReason({
+          avgVolume30,
+          iv30Rv30,
+          tsSlope0To45,
+          avgVolumePass,
+          iv30Rv30Pass,
+          tsSlopePass,
+        }),
+        wasComputed: true,
+        underlyingPrice: snapshot.spotPrice,
+        expectedMove,
+        avgVolume30,
+        iv30Rv30,
+        tsSlope0To45,
+        avgVolumePass,
+        iv30Rv30Pass,
+        tsSlopePass,
+        verdict,
+      }),
+    };
+  }
+
+  return {
+    outcome: "viable",
+    row,
   };
 }
