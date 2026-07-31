@@ -1,4 +1,5 @@
 import { getCached } from "@/lib/server/cache";
+import { ibkrMarketDataProvider } from "@/lib/server/ibkr-market-data-provider";
 import type { Ticker } from "@/lib/types";
 
 const S_AND_P_500_PRIMARY_URL =
@@ -518,3 +519,18 @@ export const marketDataProvider = {
     );
   },
 };
+
+export function getOptionDataProvider(): {
+  getOptionSnapshot: (symbol: string) => Promise<OptionSnapshot>;
+  getOptionChainCalls: (symbol: string, expiry: number) => Promise<OptionContract[]>;
+  getOptionChainPuts: (symbol: string, expiry: number) => Promise<OptionContract[]>;
+} {
+  if (process.env.IBKR_ENABLED === 'true') {
+    return ibkrMarketDataProvider;
+  }
+  return {
+    getOptionSnapshot: (s) => marketDataProvider.getOptionSnapshot(s),
+    getOptionChainCalls: (s, e) => marketDataProvider.getOptionChainCalls(s, e),
+    getOptionChainPuts: (s, e) => marketDataProvider.getOptionChainPuts(s, e),
+  };
+}
