@@ -264,3 +264,68 @@ td {
   padding-left: 1.1rem;
   color: #ffcf8b;
 }
+
+.header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.header-row > div {
+  flex: 1 1 auto;
+}
+
+.header-row h1 {
+  margin-bottom: 0.35rem;
+}
+
+.quote-source-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  margin-top: 0.5rem;
+}
+
+.quote-source-badge::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.quote-source-badge--live {
+  color: var(--green);
+  border-color: #1b5c40;
+  background: #0d2e1e;
+}
+
+.quote-source-badge--delayed {
+  color: var(--yellow);
+  border-color: #5c4a1b;
+  background: #2c2010;
+}
+
+.quote-source-badge--checking {
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.quote-source-badge--error {
+  color: var(--red);
+  border-color: #7a2a2a;
+  background: #2f1010;
+}

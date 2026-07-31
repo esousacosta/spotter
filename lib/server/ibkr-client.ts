@@ -1,13 +1,13 @@
 // IBKR Client Portal Gateway REST client.
 //
-// The gateway runs on localhost:5000 (HTTPS with a self-signed cert).
+// The gateway runs on localhost:5001 (HTTPS with a self-signed cert).
 // Set NODE_TLS_REJECT_UNAUTHORIZED=0 in .env.local for development.
 // For production use, import the gateway's self-signed cert as a trusted CA.
 //
 // KNOWN LIMITATION: NODE_TLS_REJECT_UNAUTHORIZED=0 must never be set on a
 // remote server or in any production environment.
 
-const IBKR_GATEWAY_URL = process.env.IBKR_GATEWAY_URL ?? 'https://localhost:5000';
+const IBKR_GATEWAY_URL = process.env.IBKR_GATEWAY_URL ?? 'https://localhost:5001';
 const IBKR_REQUEST_TIMEOUT_MS = 15_000;
 const IBKR_REQUEST_GAP_MS = 50;
 
@@ -52,7 +52,7 @@ async function ibkrFetch<T>(
       msg.includes('connect')
     ) {
       throw new Error(
-        'IBKR gateway is not running. Start it at https://localhost:5000 and authenticate.',
+        'IBKR gateway is not running. Start it at https://localhost:5001 and authenticate.',
       );
     }
     throw error;
@@ -60,7 +60,7 @@ async function ibkrFetch<T>(
 
   if (response.status === 401 || response.status === 403) {
     throw new Error(
-      'IBKR session expired. Open https://localhost:5000 to re-authenticate.',
+      'IBKR session expired. Open https://localhost:5001 to re-authenticate.',
     );
   }
 
@@ -289,7 +289,7 @@ export function startIbkrKeepalive(): void {
       const result = await tickle();
       if (result.session === false) {
         console.warn(
-          '[ibkr] Session appears expired. Open https://localhost:5000 to re-authenticate.',
+          '[ibkr] Session appears expired. Open https://localhost:5001 to re-authenticate.',
         );
       }
     } catch (error) {
