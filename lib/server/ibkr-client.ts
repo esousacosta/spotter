@@ -10,6 +10,7 @@
 const IBKR_GATEWAY_URL = process.env.IBKR_GATEWAY_URL ?? 'https://localhost:5001';
 const IBKR_REQUEST_TIMEOUT_MS = 15_000;
 const IBKR_REQUEST_GAP_MS = 50;
+const BRIDGE_RETRY_DELAY_MS = 3_000;
 
 let lastRequestMs = 0;
 
@@ -22,6 +23,15 @@ async function paceRequest(): Promise<void> {
   const wait = lastRequestMs + IBKR_REQUEST_GAP_MS - now;
   if (wait > 0) await sleep(wait);
   lastRequestMs = Date.now();
+}
+
+/** Fire-and-forget low-level fetch used solely for bridge re-auth — skips all logic above it. */
+async function rawFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  return fetch(`${IBKR_GATEWAY_URL}${path}`, {
+    ...options,
+    signal: AbortSignal.timeout(IBKR_REQUEST_TIMEOUT_MS),
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+  });
 }
 
 async function ibkrFetch<T>(
@@ -69,6 +79,19 @@ async function ibkrFetch<T>(
     return ibkrFetch<T>(path, options, false);
   }
 
+  // "no bridge" means the iserver bridge to TWS/IB Gateway isn't established yet.
+  // Call re-authenticate to wake it up, wait for it to connect, then retry once.
+  if (response.status === 400) {
+    const body = await response.text();
+    if (body.includes('no bridge') && retryOn503) {
+      console.warn('[ibkr] "no bridge" — calling re-authenticate and retrying in 3 s…');
+      await rawFetch('/v1/api/iserver/re-authenticate', { method: 'POST' }).catch(() => {});
+      await sleep(BRIDGE_RETRY_DELAY_MS);
+      return ibkrFetch<T>(path, options, false);
+    }
+    throw new Error(`IBKR request failed (400): ${body.slice(0, 240)}`);
+  }
+
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`IBKR request failed (${response.status}): ${body.slice(0, 240)}`);
@@ -87,6 +110,20 @@ let accountInitPromise: Promise<string> | null = null;
 type IbkrAccount = { id?: string; accountId?: string };
 
 async function doInitAccount(): Promise<string> {
+  // Proactively check the bridge. If not connected, trigger re-auth before
+  // any iserver calls so we don't burn the single "no bridge" retry budget.
+  try {
+    type AuthStatus = { authenticated: boolean; connected: boolean };
+    const status = await ibkrFetch<AuthStatus>('/v1/api/iserver/auth/status');
+    if (!status.connected) {
+      console.warn('[ibkr] IServer bridge not connected — calling re-authenticate…');
+      await rawFetch('/v1/api/iserver/re-authenticate', { method: 'POST' }).catch(() => {});
+      await sleep(BRIDGE_RETRY_DELAY_MS);
+    }
+  } catch {
+    // If auth/status itself fails, proceed anyway — ibkrFetch will handle retries.
+  }
+
   const accounts = await ibkrFetch<IbkrAccount[]>('/v1/api/portfolio/accounts');
   if (!accounts || accounts.length === 0) {
     throw new Error('No IBKR accounts found.');
