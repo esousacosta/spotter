@@ -9,7 +9,7 @@ The app surfaces **Forward Volatility Edge**:
 
 `Forward Volatility Edge = IV_short / FV_short,long - 1`
 
-Positive values indicate the requested viability condition (`IV_short > FV_short,long`).
+Rows are marked **Viable** only when the **adjusted edge is above 20%** (`adjustedEdge > 0.20`).
 
 For each tenor pair, both options are now selected at the **same shared ATM strike** (closest strike to spot that exists in both expiries).
 The recommendation pipeline now uses an earnings-aware model:

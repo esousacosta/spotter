@@ -19,6 +19,8 @@ import type { EarningsInfo } from "@/lib/server/earnings-provider";
 import { marketDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
 import type { ForwardVolRow, TargetPair } from "@/lib/types";
 
+const MIN_VIABLE_ADJUSTED_EDGE = 0.2;
+
 type SharedAtmSelection = {
   strike: number;
   short: OptionContract;
@@ -203,7 +205,7 @@ export async function computeForwardVolRowsForSymbol(
       let adjustedEdge = metrics.forwardVolEdge;
       let adjustedForwardVol = metrics.forwardVol;
       let notes = EARNINGS_STANDARD_REASON;
-      let viable = metrics.forwardVolEdge > 0;
+      let viable = metrics.forwardVolEdge > MIN_VIABLE_ADJUSTED_EDGE;
 
       if (earningsDecision.state === "earnings-exposed-post") {
         const earningsDate = earningsInfo?.nextEarningsDate ?? null;
@@ -291,7 +293,7 @@ export async function computeForwardVolRowsForSymbol(
         adjustedEdge = earningsEvaluation.adjustedEdge;
         adjustedForwardVol = earningsEvaluation.adjustedForwardVol;
         notes = earningsEvaluation.reason;
-        viable = adjustedEdge > 0;
+        viable = adjustedEdge > MIN_VIABLE_ADJUSTED_EDGE;
       }
 
       return {
