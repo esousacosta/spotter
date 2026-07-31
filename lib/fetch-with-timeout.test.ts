@@ -35,4 +35,24 @@ describe("fetchWithTimeout", () => {
     await vi.advanceTimersByTimeAsync(500);
     await assertion;
   });
+
+  it("preserves an external abort instead of reporting a timeout", async () => {
+    const controller = new AbortController();
+    globalThis.fetch = vi.fn((_input, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    });
+
+    const pending = fetchWithTimeout(
+      "https://example.test",
+      { signal: controller.signal },
+      1_000,
+    );
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
 });

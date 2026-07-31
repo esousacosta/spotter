@@ -6,6 +6,7 @@ import {
   normalizeTargets,
 } from "@/lib/server/forward-vol-service";
 import { getNextEarningsForSymbols } from "@/lib/server/earnings-provider";
+import { withInteractiveIbkrRequest } from "@/lib/server/ibkr-client";
 import { marketDataProvider } from "@/lib/server/market-data-provider";
 import type { ForwardVolResponse } from "@/lib/types";
 
@@ -50,16 +51,18 @@ export async function POST(request: Request) {
     }
 
     const now = new Date();
-    const earningsMap = await getNextEarningsForSymbols(
+    const earningsInfo = getNextEarningsForSymbols(
       [symbol],
       targets.map((target) => target.shortDte),
       now,
-    );
-    const rows = await computeForwardVolRowsForSymbol(
-      symbol,
-      targets,
-      earningsMap.get(symbol) ?? null,
-      now,
+    ).then((earningsMap) => earningsMap.get(symbol) ?? null);
+    const rows = await withInteractiveIbkrRequest(() =>
+      computeForwardVolRowsForSymbol(
+        symbol,
+        targets,
+        earningsInfo,
+        now,
+      ),
     );
     const response: ForwardVolResponse = {
       symbol,

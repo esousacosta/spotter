@@ -125,12 +125,15 @@ export function getBestValidRow(rows: ForwardVolRow[]): ForwardVolRow | null {
 export async function computeForwardVolRowsForSymbol(
   symbol: string,
   targetPairs: TargetPair[] | undefined,
-  earningsInfo: EarningsInfo | null = null,
+  earningsInfo: EarningsInfo | null | Promise<EarningsInfo | null> = null,
   now: Date = new Date(),
 ): Promise<ForwardVolRow[]> {
   const targets = normalizeTargets(targetPairs);
   const optionProvider = getOptionDataProvider();
-  const snapshot = await optionProvider.getOptionSnapshot(symbol);
+  const [snapshot, resolvedEarningsInfo] = await Promise.all([
+    optionProvider.getOptionSnapshot(symbol),
+    earningsInfo,
+  ]);
 
   const rows = await Promise.all(
     targets.map(async (target) => {
@@ -142,14 +145,14 @@ export async function computeForwardVolRowsForSymbol(
       const shortExpiryDate = formatExpiryIsoDate(chosen.short.expiryUnix);
       const longExpiryDate = formatExpiryIsoDate(chosen.long.expiryUnix);
       const earningsDecision = classifyEarningsContext({
-        nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
+        nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
         shortExpiryDate,
-        isReliable: earningsInfo?.isReliable ?? false,
+        isReliable: resolvedEarningsInfo?.isReliable ?? false,
       });
       if (earningsDecision.state === "ineligible") {
         return {
           ...emptyInvalidRow(target, earningsDecision.reason),
-          nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
+          nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
           tradeClass: earningsDecision.tradeClass,
           shortExpiry: shortExpiryDate,
           longExpiry: longExpiryDate,
@@ -170,7 +173,7 @@ export async function computeForwardVolRowsForSymbol(
             target,
             "Missing a shared ATM strike with implied volatility for both expiries.",
           ),
-          nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
+          nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
           tradeClass: earningsDecision.tradeClass,
           shortExpiry: shortExpiryDate,
           longExpiry: longExpiryDate,
@@ -189,7 +192,7 @@ export async function computeForwardVolRowsForSymbol(
       if (metrics.status === "invalid") {
         return {
           ...emptyInvalidRow(target, metrics.reason),
-          nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
+          nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
           tradeClass: earningsDecision.tradeClass,
           shortExpiry: shortExpiryDate,
           longExpiry: longExpiryDate,
@@ -209,7 +212,7 @@ export async function computeForwardVolRowsForSymbol(
       let viable = metrics.forwardVolEdge > MIN_VIABLE_ADJUSTED_EDGE;
 
       if (earningsDecision.state === "earnings-exposed-post") {
-        const earningsDate = earningsInfo?.nextEarningsDate ?? null;
+        const earningsDate = resolvedEarningsInfo?.nextEarningsDate ?? null;
         const todayIso = getMarketDateIso(now);
         const anchorExpiryUnix =
           earningsDate !== null
@@ -244,7 +247,7 @@ export async function computeForwardVolRowsForSymbol(
         if (!safeguards.ok) {
           return {
             ...emptyInvalidRow(target, safeguards.reason),
-            nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
+            nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
             tradeClass: earningsDecision.tradeClass,
             shortExpiry: shortExpiryDate,
             longExpiry: longExpiryDate,
@@ -273,7 +276,7 @@ export async function computeForwardVolRowsForSymbol(
         if (!earningsEvaluation.eligible) {
           return {
             ...emptyInvalidRow(target, earningsEvaluation.reason),
-            nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
+            nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
             tradeClass: earningsDecision.tradeClass,
             shortExpiry: shortExpiryDate,
             longExpiry: longExpiryDate,
@@ -300,7 +303,7 @@ export async function computeForwardVolRowsForSymbol(
       return {
         shortTargetDte: target.shortDte,
         longTargetDte: target.longDte,
-        nextEarningsDate: earningsInfo?.nextEarningsDate ?? null,
+        nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
         tradeClass: earningsDecision.tradeClass,
         selectedStrike: sharedAtm.strike,
         shortExpiry: shortExpiryDate,
