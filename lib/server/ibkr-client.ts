@@ -14,22 +14,57 @@ const IBKR_REQUEST_TIMEOUT_MS = 15_000;
 // CP Gateway sessions are limited to 10 requests/second.
 const IBKR_REQUEST_GAP_MS = 110;
 const BRIDGE_RETRY_DELAY_MS = 3_000;
+type MarketDataPriority = 'interactive' | 'background';
+
+const marketDataPriority = new AsyncLocalStorage<MarketDataPriority>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Concurrent-safe request pacing: each caller extends the chain by the gap
-// and awaits its own slot. No matter how many workers call paceRequest()
-// simultaneously they are serialised into a queue with IBKR_REQUEST_GAP_MS
-// between each departure. This replaces the racy lastRequestMs approach that
-// broke down when multiple workers read the same value before any could write.
-let requestChain: Promise<void> = Promise.resolve();
+const interactiveRequestQueue: Array<() => void> = [];
+const backgroundRequestQueue: Array<() => void> = [];
+let requestDispatchActive = false;
+let nextRequestAtMs = 0;
+let consecutiveInteractiveRequests = 0;
+
+async function dispatchRequestQueue(): Promise<void> {
+  if (requestDispatchActive) return;
+  requestDispatchActive = true;
+
+  while (interactiveRequestQueue.length > 0 || backgroundRequestQueue.length > 0) {
+    const waitMs = Math.max(0, nextRequestAtMs - Date.now());
+    if (waitMs > 0) await sleep(waitMs);
+
+    const priority = selectNextMarketDataPriority(
+      interactiveRequestQueue.length,
+      backgroundRequestQueue.length,
+      consecutiveInteractiveRequests,
+    );
+    const next =
+      priority === 'interactive'
+        ? interactiveRequestQueue.shift()
+        : priority === 'background'
+          ? backgroundRequestQueue.shift()
+          : undefined;
+    if (!priority || !next) break;
+
+    consecutiveInteractiveRequests =
+      priority === 'interactive' ? consecutiveInteractiveRequests + 1 : 0;
+    nextRequestAtMs = Date.now() + IBKR_REQUEST_GAP_MS;
+    next();
+  }
+
+  requestDispatchActive = false;
+}
 
 function paceRequest(): Promise<void> {
-  const mySlot = requestChain.then(() => sleep(IBKR_REQUEST_GAP_MS));
-  requestChain = mySlot;
-  return mySlot;
+  const priority = marketDataPriority.getStore() ?? 'background';
+  return new Promise<void>((resolve) => {
+    const queue = priority === 'interactive' ? interactiveRequestQueue : backgroundRequestQueue;
+    queue.push(resolve);
+    void dispatchRequestQueue();
+  });
 }
 
 /** Fire-and-forget low-level fetch used solely for bridge re-auth — skips all logic above it. */
@@ -393,16 +428,58 @@ export async function snapshotMarketData(
   return results;
 }
 
-type MarketDataPriority = 'interactive' | 'background';
-
-const marketDataPriority = new AsyncLocalStorage<MarketDataPriority>();
 const interactiveMarketDataQueue: Array<() => void> = [];
 const backgroundMarketDataQueue: Array<() => void> = [];
+const MAX_INTERACTIVE_SESSION_BURST = 4;
 let marketDataSessionActive = false;
+let consecutiveInteractiveSessions = 0;
+let interactiveSessionsDispatched = 0;
+let backgroundSessionsDispatched = 0;
+
+export function selectNextMarketDataPriority(
+  interactiveCount: number,
+  backgroundCount: number,
+  interactiveBurst: number,
+): MarketDataPriority | null {
+  if (backgroundCount > 0 && (interactiveCount === 0 || interactiveBurst >= MAX_INTERACTIVE_SESSION_BURST)) {
+    return 'background';
+  }
+  if (interactiveCount > 0) return 'interactive';
+  return backgroundCount > 0 ? 'background' : null;
+}
+
+function recordDispatchedSession(priority: MarketDataPriority): void {
+  if (priority === 'interactive') {
+    consecutiveInteractiveSessions += 1;
+    interactiveSessionsDispatched += 1;
+  } else {
+    consecutiveInteractiveSessions = 0;
+    backgroundSessionsDispatched += 1;
+  }
+}
+
+export function getMarketDataSchedulerMetrics(): {
+  interactiveQueued: number;
+  backgroundQueued: number;
+  interactiveDispatched: number;
+  backgroundDispatched: number;
+  interactiveRequestsQueued: number;
+  backgroundRequestsQueued: number;
+} {
+  return {
+    interactiveQueued: interactiveMarketDataQueue.length,
+    backgroundQueued: backgroundMarketDataQueue.length,
+    interactiveDispatched: interactiveSessionsDispatched,
+    backgroundDispatched: backgroundSessionsDispatched,
+    interactiveRequestsQueued: interactiveRequestQueue.length,
+    backgroundRequestsQueued: backgroundRequestQueue.length,
+  };
+}
 
 function acquireMarketDataSession(priority: MarketDataPriority): Promise<void> {
   if (!marketDataSessionActive) {
     marketDataSessionActive = true;
+    recordDispatchedSession(priority);
     return Promise.resolve();
   }
 
@@ -414,8 +491,19 @@ function acquireMarketDataSession(priority: MarketDataPriority): Promise<void> {
 }
 
 function releaseMarketDataSession(): void {
-  const next = interactiveMarketDataQueue.shift() ?? backgroundMarketDataQueue.shift();
-  if (next) {
+  const priority = selectNextMarketDataPriority(
+    interactiveMarketDataQueue.length,
+    backgroundMarketDataQueue.length,
+    consecutiveInteractiveSessions,
+  );
+  const next =
+    priority === 'interactive'
+      ? interactiveMarketDataQueue.shift()
+      : priority === 'background'
+        ? backgroundMarketDataQueue.shift()
+        : undefined;
+  if (priority && next) {
+    recordDispatchedSession(priority);
     next();
     return;
   }

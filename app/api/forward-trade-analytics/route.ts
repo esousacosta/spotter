@@ -5,6 +5,7 @@ import {
   ForwardTradeAnalyticsError,
   getForwardTradeAnalytics,
 } from "@/lib/server/forward-trade-analytics-service";
+import { withInteractiveIbkrRequest } from "@/lib/server/ibkr-client";
 import type { ForwardTradeAnalyticsRequest, ForwardTradeAnalyticsResponse } from "@/lib/types";
 
 const requestSchema = z
@@ -41,7 +42,9 @@ export async function POST(request: Request) {
 
   const rowKey = `${payload.symbol}|${payload.shortExpiry}|${payload.longExpiry}|${payload.strike}`;
   try {
-    const response: ForwardTradeAnalyticsResponse = await getForwardTradeAnalytics(payload);
+    const response: ForwardTradeAnalyticsResponse = await withInteractiveIbkrRequest(() =>
+      getForwardTradeAnalytics(payload),
+    );
     return NextResponse.json(response);
   } catch (error) {
     if (error instanceof ForwardTradeAnalyticsError) {

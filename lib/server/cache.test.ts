@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { clearAppCache, getCached } from "./cache";
+import { clearAppCache, getCached, getCachedStaleWhileRevalidate } from "./cache";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("getCached", () => {
   it("deduplicates concurrent loads for the same key", async () => {
@@ -50,5 +54,31 @@ describe("getCached", () => {
 
     resolveNew("new");
     await expect(Promise.all([newLoad, deduplicatedLoad])).resolves.toEqual(["new", "new"]);
+  });
+
+  it("returns stale data immediately while refreshing it once", async () => {
+    vi.useFakeTimers();
+    const cacheKey = `swr-key-${Date.now()}-${Math.random()}`;
+    await getCachedStaleWhileRevalidate(cacheKey, 100, 1_000, async () => "old");
+    await vi.advanceTimersByTimeAsync(101);
+
+    let resolveRefresh!: (value: string) => void;
+    const loader = vi.fn(
+      () => new Promise<string>((resolve) => {
+        resolveRefresh = resolve;
+      }),
+    );
+    const first = await getCachedStaleWhileRevalidate(cacheKey, 100, 1_000, loader);
+    const second = await getCachedStaleWhileRevalidate(cacheKey, 100, 1_000, loader);
+
+    expect(first).toEqual({ value: "old", isStale: true });
+    expect(second).toEqual({ value: "old", isStale: true });
+    expect(loader).toHaveBeenCalledTimes(1);
+
+    resolveRefresh("new");
+    await vi.runAllTimersAsync();
+    await expect(
+      getCachedStaleWhileRevalidate(cacheKey, 100, 1_000, loader),
+    ).resolves.toEqual({ value: "new", isStale: false });
   });
 });

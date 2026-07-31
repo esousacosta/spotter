@@ -1,8 +1,15 @@
-import { getCached } from '@/lib/server/cache';
+import {
+  deleteCached,
+  getCached,
+  getCachedStaleWhileRevalidate,
+  getCacheStatus,
+} from '@/lib/server/cache';
 import * as ibkrClient from '@/lib/server/ibkr-client';
 import type { OptionContract, OptionSnapshot } from '@/lib/server/market-data-provider';
 
-const OPTION_CHAIN_CACHE_TTL_MS = 5 * 60 * 1_000;
+const OPTION_QUOTE_CACHE_TTL_MS = 30 * 1_000;
+const OPTION_QUOTE_STALE_TTL_MS = 5 * 60 * 1_000;
+const CONTRACT_METADATA_CACHE_TTL_MS = 12 * 60 * 60 * 1_000;
 const SNAPSHOT_BATCH_SIZE = 100;
 const OPTION_CHAIN_WINDOW_DAYS = 112;
 const ATM_STRIKE_COUNT = 1;
@@ -125,19 +132,53 @@ type IbkrChain = {
   putsByExpiry: Map<number, OptionContract[]>;
   volume: number | null;
   quoteTime: string | null;
+  isStale: boolean;
 };
 
-async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
-  const raw = await getCached(`ibkr-chain-v5:${symbol}`, OPTION_CHAIN_CACHE_TTL_MS, async () => {
-    const loadStartedAt = Date.now();
-    // This search is a required IBKR derivative pre-flight and must run once
-    // per fresh chain load, even if the underlying conid is already known.
-    const underlying = await ibkrClient.searchUnderlying(symbol);
-    const underlyingConid = underlying.conid;
-    const searchCompletedAt = Date.now();
+type IbkrContractMetadata = {
+  underlyingConid: string;
+  relevantMonths: string[];
+};
 
-    const now = Date.now();
-    const end = now + OPTION_CHAIN_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+let metadataCacheHits = 0;
+let metadataCacheMisses = 0;
+
+export function getIbkrMetadataCacheMetrics(): { hits: number; misses: number } {
+  return { hits: metadataCacheHits, misses: metadataCacheMisses };
+}
+
+export async function getCachedIbkrMetadata<T>(
+  keySuffix: string,
+  loader: () => Promise<T>,
+): Promise<T> {
+  const key = `ibkr-metadata-v1:${keySuffix}`;
+  if (getCacheStatus(key) === 'fresh') {
+    metadataCacheHits += 1;
+  } else {
+    metadataCacheMisses += 1;
+  }
+  const accessCount = metadataCacheHits + metadataCacheMisses;
+  if (accessCount % 100 === 0) {
+    console.info(
+      `[ibkr] metadata cache: ${metadataCacheHits}/${accessCount} hits ` +
+        `(${Math.round((metadataCacheHits / accessCount) * 100)}%).`,
+    );
+  }
+  return getCached(key, CONTRACT_METADATA_CACHE_TTL_MS, loader);
+}
+
+function metadataDateKey(nowMs: number): string {
+  return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+async function loadContractMetadata(
+  symbol: string,
+  now: number,
+  end: number,
+  underlying: ibkrClient.IbkrUnderlying,
+): Promise<IbkrContractMetadata> {
+  const dateKey = metadataDateKey(now);
+  return getCachedIbkrMetadata(`${dateKey}:${symbol}:base`, async () => {
     const listedMonths =
       underlying.optionMonths.length > 0
         ? underlying.optionMonths
@@ -152,46 +193,93 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
       );
     }
 
-    // Spot and strike discovery are independent after the required search
-    // pre-flight, so perform them concurrently.
-    const strikeDiscoveryMonth = relevantMonths[relevantMonths.length - 1];
-    const [spotSnaps, strikes] = await Promise.all([
-      ibkrClient.withMarketDataSession(() =>
-        ibkrClient.snapshotMarketData([underlyingConid], SPOT_FIELDS, [], `${symbol} spot`),
-      ),
-      ibkrClient.getStrikes(underlyingConid, strikeDiscoveryMonth),
-    ]);
-    const spotSnap = spotSnaps[0];
-    const bid = parseSnapshotField(spotSnap?.['84']);
-    const ask = parseSnapshotField(spotSnap?.['86']);
-    const midpoint = bid != null && ask != null && bid > 0 && ask > 0 ? (bid + ask) / 2 : null;
-    const spotPrice = parseSnapshotField(spotSnap?.['31']) ?? midpoint;
-    if (!spotPrice || !Number.isFinite(spotPrice)) {
-      throw new Error(`No valid spot price from IBKR for ${symbol}.`);
-    }
-    const discoveryCompletedAt = Date.now();
+    return {
+      underlyingConid: underlying.conid,
+      relevantMonths,
+    };
+  });
+}
 
-    const strikeCandidates = selectAtmStrikes([strikes], spotPrice, 2);
+async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
+  const cacheResult = await getCachedStaleWhileRevalidate(
+    `ibkr-quotes-v1:${symbol}`,
+    OPTION_QUOTE_CACHE_TTL_MS,
+    OPTION_QUOTE_STALE_TTL_MS,
+    async () => {
+      const loadStartedAt = Date.now();
+      const now = Date.now();
+      const end = now + OPTION_CHAIN_WINDOW_DAYS * 24 * 60 * 60 * 1_000;
+      const dateKey = metadataDateKey(now);
+      // IBKR's derivative preflight is a session-local side effect. Run it on
+      // every quote refresh even when its returned metadata is cached.
+      const underlying = await ibkrClient.searchUnderlying(symbol);
+      const metadata = await loadContractMetadata(symbol, now, end, underlying);
+      const underlyingConid = metadata.underlyingConid;
+      const relevantMonths = metadata.relevantMonths;
+      const searchCompletedAt = Date.now();
+      const strikeDiscoveryMonth = relevantMonths[relevantMonths.length - 1];
+
+      const [spotSnaps, strikes] = await Promise.all([
+        ibkrClient.withMarketDataSession(() =>
+          ibkrClient.snapshotMarketData([underlyingConid], SPOT_FIELDS, [], `${symbol} spot`),
+        ),
+        getCachedIbkrMetadata(
+          `${dateKey}:${symbol}:strikes:${strikeDiscoveryMonth}`,
+          () => ibkrClient.getStrikes(underlyingConid, strikeDiscoveryMonth),
+        ),
+      ]);
+      const spotSnap = spotSnaps[0];
+      const bid = parseSnapshotField(spotSnap?.['84']);
+      const ask = parseSnapshotField(spotSnap?.['86']);
+      const midpoint =
+        bid != null && ask != null && bid > 0 && ask > 0 ? (bid + ask) / 2 : null;
+      const spotPrice = parseSnapshotField(spotSnap?.['31']) ?? midpoint;
+      if (!spotPrice || !Number.isFinite(spotPrice)) {
+        throw new Error(`No valid spot price from IBKR for ${symbol}.`);
+      }
+      const discoveryCompletedAt = Date.now();
+
+      const strikeCandidates = selectAtmStrikes([strikes], spotPrice, 2);
     if (strikeCandidates.length === 0) {
       throw new Error(`No shared near-ATM call/put strikes found for ${symbol}.`);
     }
     const selectedStrikes = strikeCandidates.slice(0, 1);
 
+    async function loadContractsForStrike(strike: number) {
+      return Promise.all(
+        relevantMonths.map(async (month) => {
+          const keySuffix = `${dateKey}:${symbol}:contracts:${strike}:${month}`;
+          try {
+            return await getCachedIbkrMetadata(keySuffix, () =>
+              ibkrClient.getOptionContracts(underlyingConid, month, strike),
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(
+              `[ibkr] ${symbol} ${month} ${strike}: secdef/info failed (${message})`,
+            );
+            return [];
+          }
+        }),
+      );
+    }
+
     async function loadContracts(strikesToLoad: number[]) {
       return Promise.all(
-        relevantMonths.flatMap((month) =>
-          strikesToLoad.map(async (strike) => {
-            try {
-              return await ibkrClient.getOptionContracts(underlyingConid, month, strike);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              console.warn(
-                `[ibkr] ${symbol} ${month} ${strike}: secdef/info failed (${message})`,
-              );
-              return [];
-            }
-          }),
-        ),
+        strikesToLoad.map(async (strike) => {
+          let groups = await loadContractsForStrike(strike);
+          if (groups.flat().length === 0) {
+            await Promise.all(
+              relevantMonths.map((month) =>
+                deleteCached(
+                  `ibkr-metadata-v1:${dateKey}:${symbol}:contracts:${strike}:${month}`,
+                ),
+              ),
+            );
+            groups = await loadContractsForStrike(strike);
+          }
+          return groups.flat();
+        }),
       );
     }
 
@@ -317,15 +405,17 @@ async function loadIbkrChain(symbol: string): Promise<IbkrChain> {
       putsByExpiry,
       volume: null,
       quoteTime: new Date().toISOString(),
+      isStale: false,
     };
   });
 
   return {
-    spotPrice: raw.spotPrice,
-    callsByExpiry: normalizeExpiryMap(raw.callsByExpiry),
-    putsByExpiry: normalizeExpiryMap(raw.putsByExpiry),
-    volume: raw.volume,
-    quoteTime: raw.quoteTime,
+    spotPrice: cacheResult.value.spotPrice,
+    callsByExpiry: normalizeExpiryMap(cacheResult.value.callsByExpiry),
+    putsByExpiry: normalizeExpiryMap(cacheResult.value.putsByExpiry),
+    volume: cacheResult.value.volume,
+    quoteTime: cacheResult.value.quoteTime,
+    isStale: cacheResult.isStale,
   };
 }
 
@@ -342,6 +432,13 @@ export const ibkrMarketDataProvider = {
       expirations,
       volume: chain.volume,
       quoteTime: chain.quoteTime,
+      isStale: chain.isStale,
+      freshUntil:
+        chain.quoteTime !== null
+          ? new Date(
+              new Date(chain.quoteTime).getTime() + OPTION_QUOTE_CACHE_TTL_MS,
+            ).toISOString()
+          : null,
     };
   },
 

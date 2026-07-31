@@ -8,11 +8,37 @@ import {
   isMonthInRange,
   selectAtmStrikes,
 } from "./ibkr-market-data-provider";
-import { generateOptionMonths, toIbkrSymbol } from "./ibkr-client";
+import {
+  generateOptionMonths,
+  selectNextMarketDataPriority,
+  toIbkrSymbol,
+} from "./ibkr-client";
+import { getCachedIbkrMetadata, getIbkrMetadataCacheMetrics } from "./ibkr-market-data-provider";
 
 describe("toIbkrSymbol", () => {
   it("converts dotted class-share tickers to IBKR's space format", () => {
     expect(toIbkrSymbol("brk.b")).toBe("BRK B");
+  });
+
+  describe("IBKR scheduling and metadata caching", () => {
+    it("serves background work after a bounded interactive burst", () => {
+      expect(selectNextMarketDataPriority(2, 1, 3)).toBe("interactive");
+      expect(selectNextMarketDataPriority(2, 1, 4)).toBe("background");
+    });
+
+    it("avoids repeating metadata discovery on the second load", async () => {
+      const loader = vi.fn(async () => ({ conid: "123" }));
+      const key = `test-${Date.now()}-${Math.random()}`;
+      const before = getIbkrMetadataCacheMetrics();
+
+      await getCachedIbkrMetadata(key, loader);
+      await getCachedIbkrMetadata(key, loader);
+
+      const after = getIbkrMetadataCacheMetrics();
+      expect(loader).toHaveBeenCalledTimes(1);
+      expect(after.misses - before.misses).toBe(1);
+      expect(after.hits - before.hits).toBe(1);
+    });
   });
 });
 

@@ -530,6 +530,8 @@ export function SpotterApp() {
     successfulSymbols: number;
     isComplete: boolean;
     isWarming: boolean;
+    isStale: boolean;
+    warning: string | null;
   } | null>(null);
   const [preRows, setPreRows] = useState<PreEarningsRow[]>([]);
   const [preRejectedRows, setPreRejectedRows] = useState<PreEarningsRejectedRow[]>([]);
@@ -543,6 +545,8 @@ export function SpotterApp() {
     rejectedSymbols: number;
     isComplete: boolean;
     isWarming: boolean;
+    isStale: boolean;
+    warning: string | null;
   } | null>(null);
   const [upcomingMeta, setUpcomingMeta] = useState<{
     daysAhead: number;
@@ -615,11 +619,24 @@ export function SpotterApp() {
     }
     const controller = new AbortController();
     let cancelled = false;
+    let refreshTimer: number | null = null;
+    let silentRetryDelayMs = 4_000;
 
-    async function loadForwardVol() {
-      setRowsLoading(true);
-      setError(null);
-      setExpandedForwardRowKey(null);
+    function scheduleSilentRefresh(delayMs: number): void {
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
+      refreshTimer = window.setTimeout(() => {
+        void loadForwardVol(true);
+      }, delayMs);
+    }
+
+    async function loadForwardVol(silent = false) {
+      if (!silent) {
+        setRowsLoading(true);
+        setError(null);
+        setExpandedForwardRowKey(null);
+      }
 
       try {
         const response = await fetchWithTimeout("/api/forward-vol", {
@@ -637,16 +654,25 @@ export function SpotterApp() {
 
         if (!cancelled) {
           setData(payload);
+          if (payload.isStale) {
+            silentRetryDelayMs = 4_000;
+            scheduleSilentRefresh(silentRetryDelayMs);
+          }
         }
       } catch (err) {
         if (cancelled || (err instanceof Error && err.name === "AbortError")) {
           return;
         }
-        const message = err instanceof Error ? err.message : "Failed to load forward volatility.";
-        setError(message);
-        setData(null);
+        if (!silent) {
+          const message = err instanceof Error ? err.message : "Failed to load forward volatility.";
+          setError(message);
+          setData(null);
+        } else {
+          scheduleSilentRefresh(silentRetryDelayMs);
+          silentRetryDelayMs = Math.min(silentRetryDelayMs * 2, 30_000);
+        }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && !silent) {
           setRowsLoading(false);
         }
       }
@@ -655,6 +681,9 @@ export function SpotterApp() {
     void loadForwardVol();
     return () => {
       cancelled = true;
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
       controller.abort();
     };
   }, [symbol]);
@@ -811,6 +840,8 @@ export function SpotterApp() {
         successfulSymbols: payload.successfulSymbols,
         isComplete: payload.isComplete,
         isWarming: payload.isWarming,
+        isStale: payload.isStale ?? false,
+        warning: payload.warning ?? null,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load top opportunities.";
@@ -856,6 +887,8 @@ export function SpotterApp() {
         rejectedSymbols: payload.rejectedSymbols,
         isComplete: payload.isComplete,
         isWarming: payload.isWarming,
+        isStale: payload.isStale ?? false,
+        warning: payload.warning ?? null,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load pre-earnings trades.";
@@ -1026,6 +1059,7 @@ export function SpotterApp() {
 
           {error ? <p className="error">{error}</p> : null}
           {rowsLoading ? <p className="muted">Calculating forward volatility edge...</p> : null}
+          {data?.isStale ? <p className="muted">{data.warning}</p> : null}
           {topRowsLoading ? <p className="muted">Scanning symbols to find top edges...</p> : null}
           {!topRowsLoading && topScanMeta?.isWarming ? (
             <p className="muted">Top-opportunities scan in progress... refreshing as new symbols complete.</p>
@@ -1138,7 +1172,8 @@ export function SpotterApp() {
               Scanned {topScanMeta.scannedSymbols} symbols, processed {topScanMeta.processedSymbols}, found valid
               opportunities for {topScanMeta.successfulSymbols}
               {topScanMeta.isComplete ? "." : " so far."}{" "}
-              Data as of <strong>{formatTimeAgo(topScanMeta.asOf)}</strong>.
+              Data as of <strong>{formatTimeAgo(topScanMeta.asOf)}</strong>
+              {topScanMeta.isStale ? " (cached quotes are refreshing)." : "."}
             </p>
           ) : null}
 
@@ -1270,7 +1305,8 @@ export function SpotterApp() {
               Scanned {preMeta.scannedSymbols} symbols, attempted {preMeta.evaluatedSymbols}, computed{" "}
               {preMeta.computedSymbols}, viable {preMeta.viableSymbols}, rejected {preMeta.rejectedSymbols}
               {preMeta.isComplete ? "." : " so far."}{" "}
-              Data as of <strong>{formatTimeAgo(preMeta.asOf)}</strong>.
+              Data as of <strong>{formatTimeAgo(preMeta.asOf)}</strong>
+              {preMeta.isStale ? " (cached quotes are refreshing)." : "."}
             </p>
           ) : null}
 
