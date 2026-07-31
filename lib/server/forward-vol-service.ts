@@ -16,7 +16,7 @@ import {
 } from "@/lib/earnings-filter";
 import { getMarketDateIso } from "@/lib/market-time";
 import type { EarningsInfo } from "@/lib/server/earnings-provider";
-import { marketDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
+import { marketDataProvider, getOptionDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
 import type { ForwardVolRow, TargetPair } from "@/lib/types";
 
 const MIN_VIABLE_ADJUSTED_EDGE = 0.2;
@@ -129,7 +129,8 @@ export async function computeForwardVolRowsForSymbol(
   now: Date = new Date(),
 ): Promise<ForwardVolRow[]> {
   const targets = normalizeTargets(targetPairs);
-  const snapshot = await marketDataProvider.getOptionSnapshot(symbol);
+  const optionProvider = getOptionDataProvider();
+  const snapshot = await optionProvider.getOptionSnapshot(symbol);
 
   const rows = await Promise.all(
     targets.map(async (target) => {
@@ -158,8 +159,8 @@ export async function computeForwardVolRowsForSymbol(
       }
 
       const [shortCalls, longCalls] = await Promise.all([
-        marketDataProvider.getOptionChainCalls(symbol, chosen.short.expiryUnix),
-        marketDataProvider.getOptionChainCalls(symbol, chosen.long.expiryUnix),
+        optionProvider.getOptionChainCalls(symbol, chosen.short.expiryUnix),
+        optionProvider.getOptionChainCalls(symbol, chosen.long.expiryUnix),
       ]);
 
       const sharedAtm = selectSharedAtmCalls(shortCalls, longCalls, snapshot.spotPrice);
@@ -216,7 +217,7 @@ export async function computeForwardVolRowsForSymbol(
             : null;
         const anchorCalls =
           anchorExpiryUnix !== null
-            ? await marketDataProvider.getOptionChainCalls(symbol, anchorExpiryUnix)
+            ? await optionProvider.getOptionChainCalls(symbol, anchorExpiryUnix)
             : [];
         const anchorContract =
           anchorExpiryUnix !== null ? findContractByStrike(anchorCalls, sharedAtm.strike) : null;

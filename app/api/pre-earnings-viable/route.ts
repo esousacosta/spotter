@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getPreEarningsScan } from "@/lib/server/pre-earnings-scan-service";
+import { clearPreEarningsScanCache, getPreEarningsScan } from "@/lib/server/pre-earnings-scan-service";
 
 const requestSchema = z.object({
   topN: z.number().int().positive().optional(),
@@ -33,4 +33,9 @@ export async function POST(request: Request) {
         : "Unexpected error while computing pre-earnings viable trades.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+export async function DELETE() {
+  await clearPreEarningsScanCache();
+  return NextResponse.json({ ok: true });
 }

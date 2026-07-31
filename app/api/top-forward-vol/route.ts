@@ -14,7 +14,11 @@ const requestSchema = z.object({
   topN: z.number().int().positive().optional(),
 });
 
-const CONCURRENCY = 1;
+const isLiveMode = process.env.IBKR_ENABLED === 'true';
+// Cboe pacing requires strict sequential processing.
+// IBKR requests are globally paced below the gateway's 10 req/s limit, so a
+// larger worker pool can overlap contract processing without creating bursts.
+const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type TopScanState = {
@@ -29,6 +33,7 @@ type TopScanState = {
 };
 
 let topScanState: TopScanState | null = null;
+let topScanGeneration = 0;
 
 function toResponse(state: TopScanState, topN: number | null): TopForwardVolResponse {
   const sorted = [...state.rows].sort((a, b) => {
@@ -48,7 +53,23 @@ function toResponse(state: TopScanState, topN: number | null): TopForwardVolResp
   };
 }
 
-async function runTopScan(state: TopScanState): Promise<void> {
+/** Run tasks over items with at most `concurrency` in-flight at a time. */
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const item = items[next++];
+      await fn(item);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+}
+
+async function runTopScan(state: TopScanState, generation: number): Promise<void> {
   const tickers = await marketDataProvider.getSP500Tickers();
   const targets = normalizeTargets(undefined);
   const earningsMap = await getNextEarningsForSymbols(
@@ -57,11 +78,11 @@ async function runTopScan(state: TopScanState): Promise<void> {
   );
 
   state.scannedSymbols = tickers.length;
-  if (CONCURRENCY !== 1) {
-    throw new Error("Top-forward scan must run with concurrency=1 for stable Cboe pacing.");
-  }
 
-  for (const ticker of tickers) {
+  await runWithConcurrency(tickers, SCAN_CONCURRENCY, async (ticker) => {
+    if (generation !== topScanGeneration) {
+      return;
+    }
     try {
       const symbolRows = await computeForwardVolRowsForSymbol(
         ticker.symbol,
@@ -82,7 +103,7 @@ async function runTopScan(state: TopScanState): Promise<void> {
     } finally {
       state.processedSymbols += 1;
     }
-  }
+  });
 }
 
 async function ensureTopScan(): Promise<TopScanState> {
@@ -104,13 +125,16 @@ async function ensureTopScan(): Promise<TopScanState> {
     runPromise: null,
   };
   topScanState = state;
+  const generation = topScanGeneration;
 
-  const runPromise = runTopScan(state)
+  const runPromise = runTopScan(state, generation)
     .then(() => {
+      if (generation !== topScanGeneration) return;
       state.status = "complete";
       state.expiresAtMs = Date.now() + SCAN_CACHE_TTL_MS;
     })
     .catch(() => {
+      if (generation !== topScanGeneration) return;
       state.status = "failed";
     });
 
@@ -142,3 +166,8 @@ export async function POST(request: Request) {
   }
 }
 
+export async function DELETE() {
+  topScanGeneration += 1;
+  topScanState = null;
+  return NextResponse.json({ ok: true });
+}

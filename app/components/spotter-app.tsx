@@ -561,8 +561,21 @@ export function SpotterApp() {
   const [analyticsByRowKey, setAnalyticsByRowKey] = useState<Record<string, ForwardTradeAnalyticsResponse>>({});
   const [analyticsLoadingByRowKey, setAnalyticsLoadingByRowKey] = useState<Record<string, boolean>>({});
   const [analyticsErrorByRowKey, setAnalyticsErrorByRowKey] = useState<Record<string, string | null>>({});
+  const [cacheClearing, setCacheClearing] = useState(false);
+  const [cacheNotice, setCacheNotice] = useState<string | null>(null);
+  const [cacheError, setCacheError] = useState<string | null>(null);
   const preRefreshInFlight = useRef(false);
   const topRefreshInFlight = useRef(false);
+
+  type IbkrStatusPayload = { enabled: boolean; authenticated: boolean; gatewayUrl: string; error?: string };
+  const [ibkrStatus, setIbkrStatus] = useState<IbkrStatusPayload | "loading" | null>("loading");
+
+  useEffect(() => {
+    fetch("/api/ibkr-status")
+      .then((res) => res.json() as Promise<IbkrStatusPayload>)
+      .then((payload) => setIbkrStatus(payload))
+      .catch(() => setIbkrStatus(null));
+  }, []);
 
   useEffect(() => {
     async function loadTickers() {
@@ -874,10 +887,78 @@ export function SpotterApp() {
     }
   }
 
+  async function clearServerCaches() {
+    setCacheClearing(true);
+    setCacheNotice(null);
+    setCacheError(null);
+    try {
+      const [cacheResponse, topResponse, preResponse] = await Promise.all([
+        fetchWithTimeout("/api/cache", { method: "DELETE" }, UI_REQUEST_TIMEOUT_MS),
+        fetchWithTimeout("/api/top-forward-vol", { method: "DELETE" }, UI_REQUEST_TIMEOUT_MS),
+        fetchWithTimeout("/api/pre-earnings-viable", { method: "DELETE" }, UI_REQUEST_TIMEOUT_MS),
+      ]);
+      if (!cacheResponse.ok || !topResponse.ok || !preResponse.ok) {
+        throw new Error("Cache clear request failed.");
+      }
+
+      const payload = (await cacheResponse.json()) as { diskFilesDeleted?: number };
+      setData(null);
+      setTopRows([]);
+      setTopScanMeta(null);
+      setPreRows([]);
+      setPreRejectedRows([]);
+      setPreMeta(null);
+      setUpcomingRows([]);
+      setUpcomingMeta(null);
+      setExpandedForwardRowKey(null);
+      setExpandedTopRowKey(null);
+      setAnalyticsByRowKey({});
+      setAnalyticsLoadingByRowKey({});
+      setAnalyticsErrorByRowKey({});
+      setCacheNotice(
+        `Cache cleared${typeof payload.diskFilesDeleted === "number" ? ` (${payload.diskFilesDeleted} disk files removed)` : ""}.`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to clear server cache.";
+      setCacheError(message);
+    } finally {
+      setCacheClearing(false);
+    }
+  }
+
   return (
     <main className="container">
-      <h1>Forward Volatility Spotter</h1>
-      <p className="muted">Scan calendar opportunities and pre-earnings setups from one place.</p>
+      <div className="header-row">
+        <div>
+          <h1>Forward Volatility Spotter</h1>
+          <p className="muted">Scan calendar opportunities and pre-earnings setups from one place.</p>
+        </div>
+        <div className="header-actions">
+          {ibkrStatus === "loading" ? (
+            <span className="quote-source-badge quote-source-badge--checking">Checking quotes…</span>
+          ) : ibkrStatus === null ? null : ibkrStatus.enabled && ibkrStatus.authenticated ? (
+            <span className="quote-source-badge quote-source-badge--live" title={`IBKR gateway: ${ibkrStatus.gatewayUrl}`}>
+              Live quotes (IBKR)
+            </span>
+          ) : ibkrStatus.enabled ? (
+            <span
+              className="quote-source-badge quote-source-badge--error"
+              title={ibkrStatus.error ?? `IBKR not authenticated — open ${ibkrStatus.gatewayUrl} to log in`}
+            >
+              IBKR offline — delayed
+            </span>
+          ) : (
+            <span className="quote-source-badge quote-source-badge--delayed" title="Using Cboe delayed option data">
+              Delayed quotes (Cboe)
+            </span>
+          )}
+          <button type="button" className="cache-clear-button" onClick={() => void clearServerCaches()} disabled={cacheClearing}>
+            {cacheClearing ? "Clearing cache..." : "Clear cache"}
+          </button>
+        </div>
+      </div>
+      {cacheNotice ? <p className="muted">{cacheNotice}</p> : null}
+      {cacheError ? <p className="error">{cacheError}</p> : null}
 
       <section className="tabs">
         <button

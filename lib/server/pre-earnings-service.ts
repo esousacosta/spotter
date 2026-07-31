@@ -1,4 +1,4 @@
-import { marketDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
+import { marketDataProvider, getOptionDataProvider, type OptionContract } from "@/lib/server/market-data-provider";
 import type { EarningsInfo } from "@/lib/server/earnings-provider";
 import { getMarketDateIso } from "@/lib/market-time";
 import type {
@@ -212,7 +212,8 @@ export async function computePreEarningsRow(
   earningsInfo: EarningsInfo | null = null,
   now: Date = new Date(),
 ): Promise<PreEarningsScanResult> {
-  const snapshot = await marketDataProvider.getOptionSnapshot(ticker.symbol);
+  const optionProvider = getOptionDataProvider();
+  const snapshot = await optionProvider.getOptionSnapshot(ticker.symbol);
   const filteredExpiries = filterExpiries(snapshot.expirations, now);
   if (filteredExpiries.length === 0) {
     return {
@@ -239,8 +240,8 @@ export async function computePreEarningsRow(
   const chains = await Promise.all(
     filteredExpiries.map(async (expiryUnix) => {
       const [calls, puts] = await Promise.all([
-        marketDataProvider.getOptionChainCalls(ticker.symbol, expiryUnix),
-        marketDataProvider.getOptionChainPuts(ticker.symbol, expiryUnix),
+        optionProvider.getOptionChainCalls(ticker.symbol, expiryUnix),
+        optionProvider.getOptionChainPuts(ticker.symbol, expiryUnix),
       ]);
       return { expiryUnix, calls, puts };
     }),
