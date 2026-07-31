@@ -42,6 +42,7 @@ type ScanState = {
 type PersistedScanState = Omit<ScanState, "runPromise">;
 
 const scanStates = new Map<number, ScanState>();
+const LEGACY_MAP_SHAPE_ERROR_FRAGMENT = "chain.callsbyexpiry.keys";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -117,6 +118,12 @@ function snapshotFromState(state: ScanState, topN: number): TopPreEarningsRespon
   };
 }
 
+function hasLegacyMapShapeError(state: Pick<ScanState, "rejectedRows">): boolean {
+  return state.rejectedRows.some((row) =>
+    row.rejectionReason.toLowerCase().includes(LEGACY_MAP_SHAPE_ERROR_FRAGMENT),
+  );
+}
+
 function getScanStateFilePath(): string {
   return path.join(getCacheDirectoryPath(), SCAN_STATE_FILE);
 }
@@ -161,7 +168,7 @@ function loadScanStateFromDisk(scanLimit: number): ScanState | null {
       return null;
     }
 
-    return {
+    const state: ScanState = {
       asOf: parsed.asOf,
       scanLimit: parsed.scanLimit,
       scannedSymbols: parsed.scannedSymbols,
@@ -173,6 +180,10 @@ function loadScanStateFromDisk(scanLimit: number): ScanState | null {
       expiresAtMs: parsed.expiresAtMs,
       runPromise: null,
     };
+    if (hasLegacyMapShapeError(state)) {
+      return null;
+    }
+    return state;
   } catch {
     return null;
   }
@@ -314,8 +325,9 @@ async function processScan(state: ScanState, tickers: Ticker[]): Promise<void> {
 async function startScan(scanLimit: number): Promise<ScanState> {
   const existing = scanStates.get(scanLimit);
   if (existing) {
+    const hasLegacyError = hasLegacyMapShapeError(existing);
     const freshComplete = existing.status === "complete" && existing.expiresAtMs > Date.now();
-    if (freshComplete || existing.status === "running") {
+    if ((freshComplete && !hasLegacyError) || existing.status === "running") {
       return existing;
     }
   }

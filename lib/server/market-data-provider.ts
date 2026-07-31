@@ -64,6 +64,39 @@ type ParsedCboeChain = {
   volume: number | null;
 };
 
+function normalizeExpiryMap(input: unknown): Map<number, OptionContract[]> {
+  if (input instanceof Map) {
+    return input as Map<number, OptionContract[]>;
+  }
+
+  const normalized = new Map<number, OptionContract[]>();
+  if (!input || typeof input !== "object") {
+    return normalized;
+  }
+
+  for (const [rawKey, rawValue] of Object.entries(input)) {
+    const expiry = Number(rawKey);
+    if (!Number.isFinite(expiry)) {
+      continue;
+    }
+    if (!Array.isArray(rawValue)) {
+      continue;
+    }
+
+    const contracts = rawValue.filter(
+      (contract): contract is OptionContract =>
+        !!contract &&
+        typeof contract === "object" &&
+        typeof (contract as OptionContract).strike === "number" &&
+        typeof (contract as OptionContract).impliedVolatility === "number" &&
+        typeof (contract as OptionContract).openInterest === "number",
+    );
+    normalized.set(expiry, contracts);
+  }
+
+  return normalized;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -286,7 +319,7 @@ function parseOccOptionSymbol(
 }
 
 async function loadCboeChain(symbol: string): Promise<ParsedCboeChain> {
-  return getCached(`cboe-chain:${symbol}`, OPTION_CHAIN_CACHE_TTL_MS, async () => {
+  const chain = await getCached(`cboe-chain:${symbol}`, OPTION_CHAIN_CACHE_TTL_MS, async () => {
     const payload = await fetchJson<CboeOptionsResponse>(
       `${CBOE_OPTIONS_URL}/${encodeURIComponent(symbol)}.json`,
       { provider: "Cboe options", minGapMs: CBOE_REQUEST_GAP_MS },
@@ -349,6 +382,13 @@ async function loadCboeChain(symbol: string): Promise<ParsedCboeChain> {
       volume,
     };
   });
+
+  return {
+    spotPrice: chain.spotPrice,
+    callsByExpiry: normalizeExpiryMap(chain.callsByExpiry),
+    putsByExpiry: normalizeExpiryMap(chain.putsByExpiry),
+    volume: chain.volume,
+  };
 }
 
 type NasdaqHistoricalResponse = {
