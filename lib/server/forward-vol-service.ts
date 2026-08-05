@@ -27,6 +27,8 @@ import {
 import type { ForwardVolRow, TargetPair } from "@/lib/types";
 
 const MIN_VIABLE_ADJUSTED_EDGE = 0.2;
+const HARD_REJECT_EDGE = 0.0; // Hard reject below this
+const SOFT_CONSIDER_EDGE = 0.05; // "Consider" tier between soft and min viable
 const MAX_CANDIDATE_PAIRS_PER_TARGET = 3;
 const ENABLE_MULTIPLE_PAIRS = true;
 const STRIKE_TOLERANCE_PCT = 2; // 2% tolerance for strike selection
@@ -172,6 +174,16 @@ export function normalizeTargets(targetPairs: TargetPair[] | undefined): TargetP
   );
 }
 
+function getViabilityTier(edge: number): "viable" | "consider" | "rejected" {
+  if (edge >= MIN_VIABLE_ADJUSTED_EDGE) {
+    return "viable";
+  } else if (edge >= SOFT_CONSIDER_EDGE) {
+    return "consider";
+  } else {
+    return "rejected";
+  }
+}
+
 export function getBestValidRow(rows: ForwardVolRow[]): ForwardVolRow | null {
   const validRows = rows.filter(
     (row): row is ForwardVolRow & { forwardVolEdge: number } =>
@@ -308,9 +320,10 @@ export async function computeForwardVolRowsForSymbol(
         notes = `${notes} ${strikeNote}`;
       }
       let viable = metrics.forwardVolEdge > MIN_VIABLE_ADJUSTED_EDGE;
+      let viabilityTier = getViabilityTier(metrics.forwardVolEdge);
       let rejectionReason: string | null = null;
 
-      if (!viable) {
+      if (viabilityTier === "rejected") {
         rejectionReason = "below_viability_threshold";
       }
 
@@ -403,7 +416,8 @@ export async function computeForwardVolRowsForSymbol(
         adjustedForwardVol = earningsEvaluation.adjustedForwardVol;
         notes = earningsEvaluation.reason;
         viable = adjustedEdge > MIN_VIABLE_ADJUSTED_EDGE;
-        if (!viable) {
+        viabilityTier = getViabilityTier(adjustedEdge);
+        if (viabilityTier === "rejected") {
           rejectionReason = "below_viability_threshold";
         }
       }
@@ -427,6 +441,7 @@ export async function computeForwardVolRowsForSymbol(
         adjustedForwardVolEdge: adjustedEdge,
         forwardVolEdge: adjustedEdge,
         isViable: viable,
+        viabilityTier,
         status: "ok" as const,
         notes,
         quoteTime: snapshot.quoteTime,
