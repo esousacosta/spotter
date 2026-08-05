@@ -141,7 +141,7 @@ export function computeForwardVolMetrics(
   };
 }
 
-export function emptyInvalidRow(target: TargetPair, notes: string): ForwardVolRow {
+export function emptyInvalidRow(target: TargetPair, notes: string, rejectionReason?: string): ForwardVolRow {
   return {
     shortTargetDte: target.shortDte,
     longTargetDte: target.longDte,
@@ -164,6 +164,7 @@ export function emptyInvalidRow(target: TargetPair, notes: string): ForwardVolRo
     status: "invalid",
     notes,
     quoteTime: null,
+    rejectionReason: (rejectionReason ?? null) as any,
   };
 }
 

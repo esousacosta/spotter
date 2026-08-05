@@ -9,7 +9,7 @@ import {
 import { buildRankingReason } from "@/lib/server/ranking-reason";
 import { getNextEarningsForSymbols } from "@/lib/server/earnings-provider";
 import { marketDataProvider } from "@/lib/server/market-data-provider";
-import type { RankedForwardVolRow, TopForwardVolResponse } from "@/lib/types";
+import type { RankedForwardVolRow, TopForwardVolResponse, ScanStats } from "@/lib/types";
 
 const requestSchema = z.object({
   topN: z.number().int().positive().optional(),
@@ -28,6 +28,7 @@ type TopScanState = {
   processedSymbols: number;
   successfulSymbols: number;
   rows: RankedForwardVolRow[];
+  scanStats: ScanStats | null;
   status: "running" | "complete" | "failed";
   expiresAtMs: number;
   runPromise: Promise<void> | null;
@@ -60,6 +61,7 @@ function toResponse(state: TopScanState, topN: number | null): TopForwardVolResp
         : sorted.some((row) => row.isStale)
           ? "Some results use cached IBKR quotes while live refreshes run in the background."
           : null,
+    scanStats: visibleState.scanStats,
     rows: topN === null ? sorted : sorted.slice(0, topN),
   };
 }
@@ -90,6 +92,17 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
 
   state.scannedSymbols = tickers.length;
 
+  const rejectionCounts: Record<string, number> = {
+    no_valid_expiry_pair: 0,
+    earnings_ineligible: 0,
+    missing_shared_atm_strike: 0,
+    invalid_forward_variance: 0,
+    below_viability_threshold: 0,
+    stale_or_missing_quote: 0,
+    failed_earnings_safeguards: 0,
+    failed_earnings_evaluation: 0,
+  };
+
   await runWithConcurrency(tickers, SCAN_CONCURRENCY, async (ticker) => {
     if (generation !== topScanGeneration) {
       return;
@@ -100,6 +113,13 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
         targets,
         earningsMap.get(ticker.symbol) ?? null,
       );
+
+      for (const row of symbolRows) {
+        if (row.rejectionReason && rejectionCounts.hasOwnProperty(row.rejectionReason)) {
+          rejectionCounts[row.rejectionReason] += 1;
+        }
+      }
+
       const bestRow = getBestValidRow(symbolRows);
       if (bestRow) {
         state.successfulSymbols += 1;
@@ -118,6 +138,18 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
       state.processedSymbols += 1;
     }
   });
+
+  const topReasons = Object.entries(rejectionCounts)
+    .map(([reason, count]) => ({ reason, count }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  state.scanStats = {
+    totalScanned: state.scannedSymbols,
+    rejectionCounts,
+    topRejectionReasons: topReasons,
+  };
 }
 
 async function ensureTopScan(): Promise<TopScanState> {
@@ -137,6 +169,7 @@ async function ensureTopScan(): Promise<TopScanState> {
     processedSymbols: 0,
     successfulSymbols: 0,
     rows: [],
+    scanStats: null,
     status: "running",
     expiresAtMs: Date.now() + SCAN_CACHE_TTL_MS,
     runPromise: null,

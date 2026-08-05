@@ -8,6 +8,16 @@ export type TargetPair = {
   longDte: number;
 };
 
+export type RejectionReason =
+  | "no_valid_expiry_pair"
+  | "earnings_ineligible"
+  | "missing_shared_atm_strike"
+  | "invalid_forward_variance"
+  | "below_viability_threshold"
+  | "stale_or_missing_quote"
+  | "failed_earnings_safeguards"
+  | "failed_earnings_evaluation";
+
 export type ForwardVolRow = {
   shortTargetDte: number;
   longTargetDte: number;
@@ -31,6 +41,7 @@ export type ForwardVolRow = {
   notes: string;
   quoteTime: string | null;
   isStale?: boolean;
+  rejectionReason?: RejectionReason | null;
 };
 
 export type ForwardVolResponse = {
@@ -48,6 +59,12 @@ export type RankedForwardVolRow = ForwardVolRow & {
   rankingReason: string | null;
 };
 
+export type ScanStats = {
+  totalScanned: number;
+  rejectionCounts: Record<string, number>;
+  topRejectionReasons: Array<{ reason: string; count: number }>;
+};
+
 export type TopForwardVolResponse = {
   asOf: string;
   scannedSymbols: number;
@@ -57,6 +74,7 @@ export type TopForwardVolResponse = {
   isWarming: boolean;
   isStale?: boolean;
   warning?: string | null;
+  scanStats?: ScanStats | null;
   rows: RankedForwardVolRow[];
 };
 

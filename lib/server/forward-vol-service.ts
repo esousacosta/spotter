@@ -144,7 +144,7 @@ export async function computeForwardVolRowsForSymbol(
     targets.map(async (target) => {
       const chosen = chooseExpiryPair(snapshot.expirations, target, 7, now);
       if (!chosen) {
-        return emptyInvalidRow(target, "Could not find a valid short/long expiration pair.");
+        return emptyInvalidRow(target, "Could not find a valid short/long expiration pair.", "no_valid_expiry_pair");
       }
 
       const shortExpiryDate = formatExpiryIsoDate(chosen.short.expiryUnix);
@@ -156,7 +156,7 @@ export async function computeForwardVolRowsForSymbol(
       });
       if (earningsDecision.state === "ineligible") {
         return {
-          ...emptyInvalidRow(target, earningsDecision.reason),
+          ...emptyInvalidRow(target, earningsDecision.reason, "earnings_ineligible"),
           nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
           tradeClass: earningsDecision.tradeClass,
           shortExpiry: shortExpiryDate,
@@ -177,6 +177,7 @@ export async function computeForwardVolRowsForSymbol(
           ...emptyInvalidRow(
             target,
             "Missing a shared ATM strike with implied volatility for both expiries.",
+            "missing_shared_atm_strike",
           ),
           nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
           tradeClass: earningsDecision.tradeClass,
@@ -196,7 +197,7 @@ export async function computeForwardVolRowsForSymbol(
 
       if (metrics.status === "invalid") {
         return {
-          ...emptyInvalidRow(target, metrics.reason),
+          ...emptyInvalidRow(target, metrics.reason, "invalid_forward_variance"),
           nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
           tradeClass: earningsDecision.tradeClass,
           shortExpiry: shortExpiryDate,
@@ -215,6 +216,11 @@ export async function computeForwardVolRowsForSymbol(
       let adjustedForwardVol = metrics.forwardVol;
       let notes = EARNINGS_STANDARD_REASON;
       let viable = metrics.forwardVolEdge > MIN_VIABLE_ADJUSTED_EDGE;
+      let rejectionReason: string | null = null;
+
+      if (!viable) {
+        rejectionReason = "below_viability_threshold";
+      }
 
       if (earningsDecision.state === "earnings-exposed-post") {
         const earningsDate = resolvedEarningsInfo?.nextEarningsDate ?? null;
@@ -251,7 +257,7 @@ export async function computeForwardVolRowsForSymbol(
         });
         if (!safeguards.ok) {
           return {
-            ...emptyInvalidRow(target, safeguards.reason),
+            ...emptyInvalidRow(target, safeguards.reason, "failed_earnings_safeguards"),
             nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
             tradeClass: earningsDecision.tradeClass,
             shortExpiry: shortExpiryDate,
@@ -280,7 +286,7 @@ export async function computeForwardVolRowsForSymbol(
 
         if (!earningsEvaluation.eligible) {
           return {
-            ...emptyInvalidRow(target, earningsEvaluation.reason),
+            ...emptyInvalidRow(target, earningsEvaluation.reason, "failed_earnings_evaluation"),
             nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
             tradeClass: earningsDecision.tradeClass,
             shortExpiry: shortExpiryDate,
@@ -303,6 +309,9 @@ export async function computeForwardVolRowsForSymbol(
         adjustedForwardVol = earningsEvaluation.adjustedForwardVol;
         notes = earningsEvaluation.reason;
         viable = adjustedEdge > MIN_VIABLE_ADJUSTED_EDGE;
+        if (!viable) {
+          rejectionReason = "below_viability_threshold";
+        }
       }
 
       return {
@@ -327,9 +336,10 @@ export async function computeForwardVolRowsForSymbol(
         status: "ok" as const,
         notes,
         quoteTime: snapshot.quoteTime,
+        rejectionReason,
       };
     }),
-  );
+  ) as ForwardVolRow[];
 
   for (const row of rows) {
     row.quoteTime ??= snapshot.quoteTime;
