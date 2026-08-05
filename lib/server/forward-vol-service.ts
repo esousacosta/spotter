@@ -8,6 +8,7 @@ import {
   getDteDays,
   type CandidateExpiryPair,
 } from "@/lib/forward-vol";
+import { buildForwardTradeRowKey } from "@/lib/forward-trade-drilldown";
 import {
   classifyEarningsContext,
   compareIsoCalendarDates,
@@ -457,12 +458,41 @@ export async function computeForwardVolRowsForSymbol(
     rowsByTarget.push(targetRows);
   }
 
-  const rows = rowsByTarget.flat() as ForwardVolRow[];
+  const flatRows = rowsByTarget.flat() as ForwardVolRow[];
 
-  for (const row of rows) {
+  for (const row of flatRows) {
     row.quoteTime ??= snapshot.quoteTime;
     row.isStale = isOptionSnapshotStale(snapshot);
   }
+
+  // Different targets can select the same actual expiry/strike combination as a
+  // candidate pair (Phase 1 multi-candidate exploration). Dedupe by the same
+  // identity used for drilldown row keys, keeping the row with the best edge.
+  const bestRowByIdentity = new Map<string, ForwardVolRow>();
+  const rowsWithoutIdentity: ForwardVolRow[] = [];
+  for (const row of flatRows) {
+    const identity = buildForwardTradeRowKey({
+      symbol,
+      shortExpiry: row.shortExpiry,
+      longExpiry: row.longExpiry,
+      selectedStrike: row.selectedStrike,
+    });
+    if (identity === null) {
+      rowsWithoutIdentity.push(row);
+      continue;
+    }
+    const existing = bestRowByIdentity.get(identity);
+    if (!existing) {
+      bestRowByIdentity.set(identity, row);
+      continue;
+    }
+    const existingEdge = existing.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
+    const candidateEdge = row.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
+    if (candidateEdge > existingEdge) {
+      bestRowByIdentity.set(identity, row);
+    }
+  }
+  const rows = [...bestRowByIdentity.values(), ...rowsWithoutIdentity];
 
   rows.sort((a, b) => {
     const aEdge = a.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
