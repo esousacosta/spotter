@@ -1,10 +1,12 @@
 import {
   chooseExpiryPair,
+  chooseMultipleExpiryPairs,
   computeForwardVolMetrics,
   DEFAULT_TARGET_PAIRS,
   emptyInvalidRow,
   formatExpiryIsoDate,
   getDteDays,
+  type CandidateExpiryPair,
 } from "@/lib/forward-vol";
 import {
   classifyEarningsContext,
@@ -25,6 +27,8 @@ import {
 import type { ForwardVolRow, TargetPair } from "@/lib/types";
 
 const MIN_VIABLE_ADJUSTED_EDGE = 0.2;
+const MAX_CANDIDATE_PAIRS_PER_TARGET = 3;
+const ENABLE_MULTIPLE_PAIRS = true;
 
 type SharedAtmSelection = {
   strike: number;
@@ -140,13 +144,33 @@ export async function computeForwardVolRowsForSymbol(
     earningsInfo,
   ]);
 
-  const rows = await Promise.all(
-    targets.map(async (target) => {
-      const chosen = chooseExpiryPair(snapshot.expirations, target, 7, now);
-      if (!chosen) {
-        return emptyInvalidRow(target, "Could not find a valid short/long expiration pair.", "no_valid_expiry_pair");
-      }
+  const rowsByTarget: ForwardVolRow[][] = [];
 
+  for (const target of targets) {
+    const targetRows: ForwardVolRow[] = [];
+
+    // Get multiple candidate pairs per target if enabled
+    const candidatePairs = ENABLE_MULTIPLE_PAIRS
+      ? chooseMultipleExpiryPairs(snapshot.expirations, target, 7, MAX_CANDIDATE_PAIRS_PER_TARGET, now)
+      : chooseExpiryPair(snapshot.expirations, target, 7, now)
+        ? [
+            {
+              short: chooseExpiryPair(snapshot.expirations, target, 7, now)!.short,
+              long: chooseExpiryPair(snapshot.expirations, target, 7, now)!.long,
+              distanceToTarget: 0,
+            },
+          ]
+        : [];
+
+    if (candidatePairs.length === 0) {
+      targetRows.push(emptyInvalidRow(target, "Could not find a valid short/long expiration pair.", "no_valid_expiry_pair"));
+      rowsByTarget.push(targetRows);
+      continue;
+    }
+
+    // Evaluate each candidate pair
+    for (const candidatePair of candidatePairs) {
+      const chosen = candidatePair;
       const shortExpiryDate = formatExpiryIsoDate(chosen.short.expiryUnix);
       const longExpiryDate = formatExpiryIsoDate(chosen.long.expiryUnix);
       const earningsDecision = classifyEarningsContext({
@@ -154,8 +178,9 @@ export async function computeForwardVolRowsForSymbol(
         shortExpiryDate,
         isReliable: resolvedEarningsInfo?.isReliable ?? false,
       });
+
       if (earningsDecision.state === "ineligible") {
-        return {
+        targetRows.push({
           ...emptyInvalidRow(target, earningsDecision.reason, "earnings_ineligible"),
           nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
           tradeClass: earningsDecision.tradeClass,
@@ -163,7 +188,8 @@ export async function computeForwardVolRowsForSymbol(
           longExpiry: longExpiryDate,
           shortDteActual: Number(chosen.short.dteDays.toFixed(2)),
           longDteActual: Number(chosen.long.dteDays.toFixed(2)),
-        };
+        });
+        continue;
       }
 
       const [shortCalls, longCalls] = await Promise.all([
@@ -173,7 +199,7 @@ export async function computeForwardVolRowsForSymbol(
 
       const sharedAtm = selectSharedAtmCalls(shortCalls, longCalls, snapshot.spotPrice);
       if (!sharedAtm) {
-        return {
+        targetRows.push({
           ...emptyInvalidRow(
             target,
             "Missing a shared ATM strike with implied volatility for both expiries.",
@@ -185,7 +211,8 @@ export async function computeForwardVolRowsForSymbol(
           longExpiry: longExpiryDate,
           shortDteActual: Number(chosen.short.dteDays.toFixed(2)),
           longDteActual: Number(chosen.long.dteDays.toFixed(2)),
-        };
+        });
+        continue;
       }
 
       const metrics = computeForwardVolMetrics(
@@ -196,7 +223,7 @@ export async function computeForwardVolRowsForSymbol(
       );
 
       if (metrics.status === "invalid") {
-        return {
+        targetRows.push({
           ...emptyInvalidRow(target, metrics.reason, "invalid_forward_variance"),
           nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
           tradeClass: earningsDecision.tradeClass,
@@ -209,7 +236,8 @@ export async function computeForwardVolRowsForSymbol(
           ivLong: sharedAtm.long.impliedVolatility,
           shortOpenInterest: sharedAtm.short.openInterest,
           longOpenInterest: sharedAtm.long.openInterest,
-        };
+        });
+        continue;
       }
 
       let adjustedEdge = metrics.forwardVolEdge;
@@ -256,7 +284,7 @@ export async function computeForwardVolRowsForSymbol(
           daysEarningsToLong: earningsDate ? dayDiffIso(earningsDate, longExpiryDate) : null,
         });
         if (!safeguards.ok) {
-          return {
+          targetRows.push({
             ...emptyInvalidRow(target, safeguards.reason, "failed_earnings_safeguards"),
             nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
             tradeClass: earningsDecision.tradeClass,
@@ -273,7 +301,8 @@ export async function computeForwardVolRowsForSymbol(
             rawForwardVolEdge: metrics.forwardVolEdge,
             adjustedForwardVolEdge: null,
             forwardVolEdge: null,
-          };
+          });
+          continue;
         }
 
         const earningsEvaluation = evaluateEarningsExposedAdjustedEdge({
@@ -285,7 +314,7 @@ export async function computeForwardVolRowsForSymbol(
         });
 
         if (!earningsEvaluation.eligible) {
-          return {
+          targetRows.push({
             ...emptyInvalidRow(target, earningsEvaluation.reason, "failed_earnings_evaluation"),
             nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
             tradeClass: earningsDecision.tradeClass,
@@ -302,7 +331,8 @@ export async function computeForwardVolRowsForSymbol(
             rawForwardVolEdge: metrics.forwardVolEdge,
             adjustedForwardVolEdge: earningsEvaluation.adjustedEdge,
             forwardVolEdge: earningsEvaluation.adjustedEdge,
-          };
+          });
+          continue;
         }
 
         adjustedEdge = earningsEvaluation.adjustedEdge;
@@ -314,7 +344,7 @@ export async function computeForwardVolRowsForSymbol(
         }
       }
 
-      return {
+      targetRows.push({
         shortTargetDte: target.shortDte,
         longTargetDte: target.longDte,
         nextEarningsDate: resolvedEarningsInfo?.nextEarningsDate ?? null,
@@ -336,10 +366,14 @@ export async function computeForwardVolRowsForSymbol(
         status: "ok" as const,
         notes,
         quoteTime: snapshot.quoteTime,
-        rejectionReason,
-      };
-    }),
-  ) as ForwardVolRow[];
+        rejectionReason: (rejectionReason ?? null) as any,
+      });
+    }
+
+    rowsByTarget.push(targetRows);
+  }
+
+  const rows = rowsByTarget.flat() as ForwardVolRow[];
 
   for (const row of rows) {
     row.quoteTime ??= snapshot.quoteTime;

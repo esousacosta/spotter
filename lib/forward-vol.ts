@@ -19,6 +19,10 @@ export type ChosenExpiryPair = {
   long: ExpiryWithDte;
 };
 
+export type CandidateExpiryPair = ChosenExpiryPair & {
+  distanceToTarget: number;
+};
+
 export function getDteDays(expiryUnix: number, now: Date = new Date()): number {
   const expiryMs = expiryUnix * 1000;
   const diffMs = expiryMs - now.getTime();
@@ -76,6 +80,62 @@ export function chooseExpiryPair(
   }
 
   return { short, long };
+}
+
+export function chooseMultipleExpiryPairs(
+  expirationsUnix: number[],
+  target: TargetPair,
+  minGapDays: number,
+  maxCandidates: number = 3,
+  now: Date = new Date(),
+): CandidateExpiryPair[] {
+  const candidates = expirationsUnix
+    .map((expiryUnix) => ({ expiryUnix, dteDays: getDteDays(expiryUnix, now) }))
+    .filter((entry) => entry.dteDays > 0);
+
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const pairs: CandidateExpiryPair[] = [];
+
+  // Find all possible short leg candidates within reasonable distance
+  const shortCandidates = [...candidates]
+    .sort((a, b) => Math.abs(a.dteDays - target.shortDte) - Math.abs(b.dteDays - target.shortDte))
+    .slice(0, Math.max(2, Math.ceil(candidates.length / 3)));
+
+  for (const shortCandidate of shortCandidates) {
+    const longCandidates = candidates
+      .filter(
+        (candidate) =>
+          candidate.expiryUnix > shortCandidate.expiryUnix &&
+          candidate.dteDays - shortCandidate.dteDays >= minGapDays,
+      )
+      .sort((a, b) => {
+        const distanceDelta =
+          Math.abs(a.dteDays - target.longDte) - Math.abs(b.dteDays - target.longDte);
+        if (distanceDelta !== 0) {
+          return distanceDelta;
+        }
+        return b.expiryUnix - a.expiryUnix;
+      })
+      .slice(0, 2);
+
+    for (const longCandidate of longCandidates) {
+      const shortDistance = Math.abs(shortCandidate.dteDays - target.shortDte);
+      const longDistance = Math.abs(longCandidate.dteDays - target.longDte);
+      const distanceToTarget = Math.sqrt(shortDistance ** 2 + longDistance ** 2);
+
+      pairs.push({
+        short: shortCandidate,
+        long: longCandidate,
+        distanceToTarget,
+      });
+    }
+  }
+
+  pairs.sort((a, b) => a.distanceToTarget - b.distanceToTarget);
+  return pairs.slice(0, maxCandidates);
 }
 
 type ForwardVolMetrics =
