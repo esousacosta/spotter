@@ -29,11 +29,15 @@ import type { ForwardVolRow, TargetPair } from "@/lib/types";
 const MIN_VIABLE_ADJUSTED_EDGE = 0.2;
 const MAX_CANDIDATE_PAIRS_PER_TARGET = 3;
 const ENABLE_MULTIPLE_PAIRS = true;
+const STRIKE_TOLERANCE_PCT = 2; // 2% tolerance for strike selection
+const ENABLE_STRIKE_TOLERANCE = true;
 
 type SharedAtmSelection = {
   strike: number;
   short: OptionContract;
   long: OptionContract;
+  isExactMatch?: boolean;
+  isFallbackStrike?: boolean;
 };
 
 function toStrikeKey(strike: number): string {
@@ -60,6 +64,58 @@ function findContractByStrike(
 ): OptionContract | null {
   const key = toStrikeKey(strike);
   return contracts.find((contract) => toStrikeKey(contract.strike) === key) ?? null;
+}
+
+function selectFlexibleAtmCalls(
+  shortContracts: OptionContract[],
+  longContracts: OptionContract[],
+  spotPrice: number,
+): SharedAtmSelection | null {
+  if (shortContracts.length === 0 || longContracts.length === 0) {
+    return null;
+  }
+
+  // Step 1: Try to find exact shared ATM strike
+  const exactMatch = selectSharedAtmCalls(shortContracts, longContracts, spotPrice);
+  if (exactMatch) {
+    return { ...exactMatch, isExactMatch: true };
+  }
+
+  if (!ENABLE_STRIKE_TOLERANCE) {
+    return null;
+  }
+
+  // Step 2: Try to find strikes within tolerance
+  const tolerance = (spotPrice * STRIKE_TOLERANCE_PCT) / 100;
+  const toleranceBand = { min: spotPrice - tolerance, max: spotPrice + tolerance };
+
+  // Find best strikes in both legs within tolerance
+  const shortCandidates = shortContracts
+    .filter((c) => c.strike >= toleranceBand.min && c.strike <= toleranceBand.max)
+    .sort((a, b) => Math.abs(a.strike - spotPrice) - Math.abs(b.strike - spotPrice));
+
+  const longCandidates = longContracts
+    .filter((c) => c.strike >= toleranceBand.min && c.strike <= toleranceBand.max)
+    .sort((a, b) => Math.abs(a.strike - spotPrice) - Math.abs(b.strike - spotPrice));
+
+  if (shortCandidates.length === 0 || longCandidates.length === 0) {
+    return null;
+  }
+
+  // Use nearest strike to spot in each leg
+  const shortStrike = shortCandidates[0];
+  const longStrike = longCandidates[0];
+
+  // Use the average strike as the "selected strike" for reporting
+  const selectedStrike = (shortStrike.strike + longStrike.strike) / 2;
+
+  return {
+    strike: selectedStrike,
+    short: shortStrike,
+    long: longStrike,
+    isFallbackStrike: true,
+    isExactMatch: false,
+  };
 }
 
 function selectSharedAtmCalls(
@@ -107,7 +163,7 @@ function selectSharedAtmCalls(
       return delta;
     }
     return a.strike - b.strike;
-  })[0];
+  })[0] || { ...common[0], isExactMatch: true };
 }
 
 export function normalizeTargets(targetPairs: TargetPair[] | undefined): TargetPair[] {
@@ -197,7 +253,7 @@ export async function computeForwardVolRowsForSymbol(
         optionProvider.getOptionChainCalls(symbol, chosen.long.expiryUnix),
       ]);
 
-      const sharedAtm = selectSharedAtmCalls(shortCalls, longCalls, snapshot.spotPrice);
+      const sharedAtm = selectFlexibleAtmCalls(shortCalls, longCalls, snapshot.spotPrice);
       if (!sharedAtm) {
         targetRows.push({
           ...emptyInvalidRow(
@@ -214,6 +270,11 @@ export async function computeForwardVolRowsForSymbol(
         });
         continue;
       }
+
+      // Track if fallback strike was used
+      const strikeNote = sharedAtm.isFallbackStrike
+        ? `Fallback strike ${sharedAtm.strike.toFixed(2)} used (within ${STRIKE_TOLERANCE_PCT}% tolerance).`
+        : undefined;
 
       const metrics = computeForwardVolMetrics(
         sharedAtm.short.impliedVolatility,
@@ -243,6 +304,9 @@ export async function computeForwardVolRowsForSymbol(
       let adjustedEdge = metrics.forwardVolEdge;
       let adjustedForwardVol = metrics.forwardVol;
       let notes = EARNINGS_STANDARD_REASON;
+      if (strikeNote) {
+        notes = `${notes} ${strikeNote}`;
+      }
       let viable = metrics.forwardVolEdge > MIN_VIABLE_ADJUSTED_EDGE;
       let rejectionReason: string | null = null;
 
