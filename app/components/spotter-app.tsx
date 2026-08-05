@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { signOut } from "next-auth/react";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
@@ -82,10 +84,12 @@ function SortableHeader<T>({
 
 function WatchlistButton({
   active,
+  disabled = false,
   onClick,
   symbol,
 }: {
   active: boolean;
+  disabled?: boolean;
   onClick: () => void;
   symbol: string;
 }) {
@@ -94,6 +98,7 @@ function WatchlistButton({
       type="button"
       className={active ? "watchlist-toggle is-active" : "watchlist-toggle"}
       onClick={onClick}
+      disabled={disabled}
       aria-label={`${active ? "Remove" : "Add"} ${symbol} ${active ? "from" : "to"} watchlist`}
       title={active ? "Remove from watchlist" : "Add to watchlist"}
     >
@@ -594,7 +599,12 @@ function ForwardTradeDetailsPanel({
   );
 }
 
-export function SpotterApp() {
+type SpotterAppProps = {
+  authenticationEnabled: boolean;
+  user: { email: string | null } | null;
+};
+
+export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
   const [activeTab, setActiveTab] = useState<"forward" | "preearnings" | "upcomingearnings">("forward");
   const [preEarningsSubtab, setPreEarningsSubtab] = useState<"viable" | "rejected">("viable");
   const [tickers, setTickers] = useState<Ticker[]>([]);
@@ -616,6 +626,8 @@ export function SpotterApp() {
   const [upcomingRows, setUpcomingRows] = useState<UpcomingEarningsRow[]>([]);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchlistReady, setWatchlistReady] = useState(false);
+  const [watchlistSyncing, setWatchlistSyncing] = useState(false);
+  const [watchlistError, setWatchlistError] = useState<string | null>(null);
   const [watchForwardRows, setWatchForwardRows] = useState<RankedForwardVolRow[]>([]);
   const [watchPreRows, setWatchPreRows] = useState<PreEarningsRow[]>([]);
   const [watchForwardError, setWatchForwardError] = useState<string | null>(null);
@@ -675,18 +687,63 @@ export function SpotterApp() {
   const [ibkrStatus, setIbkrStatus] = useState<IbkrStatusPayload | "loading" | null>("loading");
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      setWatchlist(loadWatchlist());
-      setWatchlistReady(true);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
+    let cancelled = false;
 
-  useEffect(() => {
-    if (watchlistReady) {
-      saveWatchlist(watchlist);
+    async function hydrateWatchlist() {
+      const guestSymbols = loadWatchlist();
+      if (!user) {
+        setWatchlist(guestSymbols);
+        setWatchlistReady(true);
+        return;
+      }
+
+      setWatchlistSyncing(true);
+      setWatchlistError(null);
+      try {
+        const getResponse = await fetch("/api/watchlist");
+        const getPayload = (await getResponse.json()) as { symbols?: string[]; error?: string };
+        if (!getResponse.ok || !getPayload.symbols) {
+          throw new Error(getPayload.error ?? "Failed to load watchlist.");
+        }
+
+        let symbols = getPayload.symbols;
+        if (guestSymbols.length > 0) {
+          const merged = [...new Set([...symbols, ...guestSymbols])].slice(0, 30);
+          const putResponse = await fetch("/api/watchlist", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ symbols: merged }),
+          });
+          const putPayload = (await putResponse.json()) as { symbols?: string[]; error?: string };
+          if (!putResponse.ok || !putPayload.symbols) {
+            throw new Error(putPayload.error ?? "Failed to merge guest watchlist.");
+          }
+          symbols = putPayload.symbols;
+        }
+
+        if (!cancelled) {
+          setWatchlist(symbols);
+          if (guestSymbols.length > 0) {
+            saveWatchlist([]);
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setWatchlistError(error instanceof Error ? error.message : "Failed to load watchlist.");
+        }
+      } finally {
+        if (!cancelled) {
+          setWatchlistReady(true);
+          setWatchlistSyncing(false);
+        }
+      }
     }
-  }, [watchlist, watchlistReady]);
+
+    void hydrateWatchlist();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     fetch("/api/ibkr-status")
@@ -960,25 +1017,78 @@ export function SpotterApp() {
     return sortRows(filtered, preSortConfig);
   }, [preFilter, preRows, preSortConfig]);
 
-  function toggleWatchlistSymbol(rowSymbol: string): void {
-    const normalized = rowSymbol.trim().toUpperCase();
-    if (watchlist.includes(normalized)) {
-      setWatchForwardRows((rows) => rows.filter((row) => row.symbol !== normalized));
-      setWatchPreRows((rows) => rows.filter((row) => row.symbol !== normalized));
+  async function toggleWatchlistSymbol(rowSymbol: string): Promise<void> {
+    if (watchlistSyncing) {
+      return;
     }
-    setWatchlist((current) =>
-      current.includes(normalized)
-        ? current.filter((item) => item !== normalized)
-        : [...current, normalized].slice(0, 30),
-    );
+
+    const normalized = rowSymbol.trim().toUpperCase();
+    const removing = watchlist.includes(normalized);
+    setWatchlistSyncing(true);
+    setWatchlistError(null);
+    try {
+      if (user) {
+        const response = await fetch(removing ? `/api/watchlist/${encodeURIComponent(normalized)}` : "/api/watchlist", {
+          method: removing ? "DELETE" : "POST",
+          headers: removing ? undefined : { "Content-Type": "application/json" },
+          body: removing ? undefined : JSON.stringify({ symbol: normalized }),
+        });
+        const payload = (await response.json()) as { symbols?: string[]; error?: string };
+        if (!response.ok || !payload.symbols) {
+          throw new Error(payload.error ?? "Failed to update watchlist.");
+        }
+        setWatchlist(payload.symbols);
+      } else {
+        const next = removing
+          ? watchlist.filter((item) => item !== normalized)
+          : [...watchlist, normalized].slice(0, 30);
+        saveWatchlist(next);
+        setWatchlist(next);
+      }
+
+      if (removing) {
+        setWatchForwardRows((rows) => rows.filter((row) => row.symbol !== normalized));
+        setWatchPreRows((rows) => rows.filter((row) => row.symbol !== normalized));
+      }
+    } catch (error) {
+      setWatchlistError(error instanceof Error ? error.message : "Failed to update watchlist.");
+    } finally {
+      setWatchlistSyncing(false);
+    }
   }
 
-  function clearWatchlist(): void {
-    setWatchlist([]);
-    setWatchForwardRows([]);
-    setWatchPreRows([]);
-    setWatchForwardError(null);
-    setWatchPreError(null);
+  async function clearWatchlist(): Promise<void> {
+    if (watchlistSyncing) {
+      return;
+    }
+
+    setWatchlistSyncing(true);
+    setWatchlistError(null);
+    try {
+      if (user) {
+        const response = await fetch("/api/watchlist", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbols: [] }),
+        });
+        const payload = (await response.json()) as { symbols?: string[]; error?: string };
+        if (!response.ok || !payload.symbols) {
+          throw new Error(payload.error ?? "Failed to clear watchlist.");
+        }
+      } else {
+        saveWatchlist([]);
+      }
+
+      setWatchlist([]);
+      setWatchForwardRows([]);
+      setWatchPreRows([]);
+      setWatchForwardError(null);
+      setWatchPreError(null);
+    } catch (error) {
+      setWatchlistError(error instanceof Error ? error.message : "Failed to clear watchlist.");
+    } finally {
+      setWatchlistSyncing(false);
+    }
   }
 
   async function ensureForwardTradeAnalytics(row: ForwardVolRow, rowSymbol: string): Promise<void> {
@@ -1245,6 +1355,18 @@ export function SpotterApp() {
           </div>
         </div>
         <div className="header-actions">
+          {user ? (
+            <div className="auth-status">
+              <span>Signed in as {user.email}</span>
+              <button type="button" onClick={() => void signOut({ redirectTo: "/" })}>
+                Log out
+              </button>
+            </div>
+          ) : authenticationEnabled ? (
+            <Link className="button-secondary auth-link" href="/login">
+              Log in
+            </Link>
+          ) : null}
           {ibkrStatus === "loading" ? (
             <span className="quote-source-badge quote-source-badge--checking">Checking quotes...</span>
           ) : ibkrStatus === null ? null : ibkrStatus.enabled && ibkrStatus.authenticated ? (
@@ -1276,6 +1398,13 @@ export function SpotterApp() {
 
       {cacheNotice ? <p className="notice notice--success">{cacheNotice}</p> : null}
       {cacheError ? <p className="error">{cacheError}</p> : null}
+      {!watchlistReady ? <p className="notice notice--loading">Syncing watchlist...</p> : null}
+      {watchlistError ? <p className="error">{watchlistError}</p> : null}
+      {watchlistReady && authenticationEnabled && !user ? (
+        <p className="watchlist-sync-note">
+          <Link href="/login">Log in</Link> to sync your watchlist across sessions.
+        </p>
+      ) : null}
 
       <nav className="primary-nav" aria-label="Screening workflows">
         <button
@@ -1326,8 +1455,13 @@ export function SpotterApp() {
                     <p className="eyebrow">Saved symbols</p>
                     <h2>Watchlist</h2>
                   </div>
-                  <button type="button" className="button-secondary button-compact" onClick={clearWatchlist}>
-                    Clear watchlist
+                  <button
+                    type="button"
+                    className="button-secondary button-compact"
+                    onClick={() => void clearWatchlist()}
+                    disabled={watchlistSyncing}
+                  >
+                    {watchlistSyncing ? "Syncing..." : "Clear watchlist"}
                   </button>
                 </div>
                 {watchForwardError ? <p className="error">{watchForwardError}</p> : null}
@@ -1351,8 +1485,9 @@ export function SpotterApp() {
                             <td>
                               <WatchlistButton
                                 active
+                                disabled={watchlistSyncing}
                                 symbol={row.symbol}
-                                onClick={() => toggleWatchlistSymbol(row.symbol)}
+                                onClick={() => void toggleWatchlistSymbol(row.symbol)}
                               />
                             </td>
                             <td className="cell-emphasis">{row.symbol}</td>
@@ -1578,8 +1713,9 @@ export function SpotterApp() {
                                     <td>
                                       <WatchlistButton
                                         active={watchlist.includes(symbol)}
+                                        disabled={watchlistSyncing}
                                         symbol={symbol}
-                                        onClick={() => toggleWatchlistSymbol(symbol)}
+                                        onClick={() => void toggleWatchlistSymbol(symbol)}
                                       />
                                     </td>
                                     <td className="cell-emphasis">
@@ -1858,8 +1994,9 @@ export function SpotterApp() {
                                   <td>
                                     <WatchlistButton
                                       active={watchlist.includes(row.symbol)}
+                                      disabled={watchlistSyncing}
                                       symbol={row.symbol}
-                                      onClick={() => toggleWatchlistSymbol(row.symbol)}
+                                      onClick={() => void toggleWatchlistSymbol(row.symbol)}
                                     />
                                   </td>
                                   <td className="cell-emphasis">{row.symbol}</td>
@@ -1940,8 +2077,13 @@ export function SpotterApp() {
                   <p className="eyebrow">Saved symbols</p>
                   <h2>Watchlist</h2>
                 </div>
-                <button type="button" className="button-secondary button-compact" onClick={clearWatchlist}>
-                  Clear watchlist
+                <button
+                  type="button"
+                  className="button-secondary button-compact"
+                  onClick={() => void clearWatchlist()}
+                  disabled={watchlistSyncing}
+                >
+                  {watchlistSyncing ? "Syncing..." : "Clear watchlist"}
                 </button>
               </div>
               {watchPreError ? <p className="error">{watchPreError}</p> : null}
@@ -1965,8 +2107,9 @@ export function SpotterApp() {
                           <td>
                             <WatchlistButton
                               active
+                              disabled={watchlistSyncing}
                               symbol={row.symbol}
-                              onClick={() => toggleWatchlistSymbol(row.symbol)}
+                              onClick={() => void toggleWatchlistSymbol(row.symbol)}
                             />
                           </td>
                           <td className="cell-emphasis">{row.symbol}</td>
@@ -2174,8 +2317,9 @@ export function SpotterApp() {
                             <td>
                               <WatchlistButton
                                 active={watchlist.includes(row.symbol)}
+                                disabled={watchlistSyncing}
                                 symbol={row.symbol}
-                                onClick={() => toggleWatchlistSymbol(row.symbol)}
+                                onClick={() => void toggleWatchlistSymbol(row.symbol)}
                               />
                             </td>
                             <td className="cell-emphasis">{row.symbol}</td>
@@ -2247,8 +2391,9 @@ export function SpotterApp() {
                             <td>
                               <WatchlistButton
                                 active={watchlist.includes(row.symbol)}
+                                disabled={watchlistSyncing}
                                 symbol={row.symbol}
-                                onClick={() => toggleWatchlistSymbol(row.symbol)}
+                                onClick={() => void toggleWatchlistSymbol(row.symbol)}
                               />
                             </td>
                             <td className="cell-emphasis">{row.symbol}</td>

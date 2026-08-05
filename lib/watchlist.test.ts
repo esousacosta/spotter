@@ -46,7 +46,9 @@ describe("watchlist", () => {
   });
 
   it("recovers from malformed persisted data", () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     window.localStorage.setItem("fvs:watchlist", "{bad json");
     expect(loadWatchlist()).toEqual([]);
+    expect(warning).toHaveBeenCalledOnce();
   });
 });

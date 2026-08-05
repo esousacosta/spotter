@@ -61,10 +61,23 @@ Install dependencies and run the app:
 
 ```bash
 npm install
+npm run db:migrate
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+## Authentication and watchlists
+
+The app supports optional credentials authentication and SQLite-backed per-user watchlists. Create `.env.local` with:
+
+```bash
+AUTH_ENABLED=true
+AUTH_SECRET=<strong-random-secret>
+DATABASE_URL=file:./data/spotter.db
+```
+
+Generate a secret with `npx auth secret`, then run `npm run db:migrate`. When authentication is not configured, watchlists remain available in guest mode and are stored in the browser. Guest symbols are merged into the account watchlist after the first successful login.
 
 ## Implemented endpoints
 
@@ -109,6 +122,9 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
   }
   ```
   Returns upcoming announced S&P 500 earnings events, plus strategy timing fields for the pre-earnings workflow (entry: 15 minutes before close on earnings day, exit: 15 minutes after next-day open).
+
+- `GET`, `POST`, and `PUT /api/watchlist`; `DELETE /api/watchlist/:symbol`
+  Authenticated watchlist CRUD. Symbols are normalized, unique per user, and capped at 30.
 
 ## Notes
 

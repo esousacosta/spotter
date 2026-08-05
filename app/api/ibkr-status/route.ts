@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
   const enabled = process.env.IBKR_ENABLED === "true";
-  const gatewayUrl = process.env.IBKR_GATEWAY_URL ?? "https://localhost:5000";
+  const gatewayUrl = process.env.IBKR_GATEWAY_URL ?? "https://localhost:5001";
 
   if (!enabled) {
     return NextResponse.json({ enabled: false, authenticated: false, gatewayUrl });

@@ -1,20 +1,6 @@
+import { normalizeWatchlistSymbols } from "@/lib/watchlist-symbol";
+
 const WATCHLIST_STORAGE_KEY = "fvs:watchlist";
-const WATCHLIST_LIMIT = 30;
-
-function normalizeSymbols(symbols: unknown): string[] {
-  if (!Array.isArray(symbols)) {
-    return [];
-  }
-
-  return [
-    ...new Set(
-      symbols
-        .filter((symbol): symbol is string => typeof symbol === "string")
-        .map((symbol) => symbol.trim().toUpperCase())
-        .filter(Boolean),
-    ),
-  ].slice(0, WATCHLIST_LIMIT);
-}
 
 export function loadWatchlist(): string[] {
   if (typeof window === "undefined") {
@@ -22,8 +8,9 @@ export function loadWatchlist(): string[] {
   }
 
   try {
-    return normalizeSymbols(JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) ?? "[]"));
-  } catch {
+    return normalizeWatchlistSymbols(JSON.parse(window.localStorage.getItem(WATCHLIST_STORAGE_KEY) ?? "[]"));
+  } catch (error) {
+    console.warn("Ignoring an invalid guest watchlist.", error);
     return [];
   }
 }
@@ -33,7 +20,7 @@ export function saveWatchlist(symbols: string[]): void {
     return;
   }
 
-  window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(normalizeSymbols(symbols)));
+  window.localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(normalizeWatchlistSymbols(symbols)));
 }
 
 export function addToWatchlist(symbol: string): void {
