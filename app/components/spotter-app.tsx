@@ -1688,7 +1688,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                             </tr>
                           </thead>
                           <tbody>
-                            {visibleForwardRows.map((row) => {
+                            {visibleForwardRows.map((row, rowIndex) => {
                               const rowClass =
                                 row.status === "invalid"
                                   ? "row-invalid"
@@ -1708,7 +1708,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                               const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
 
                               return (
-                                <Fragment key={rowKey ?? `${row.shortTargetDte}-${row.longTargetDte}`}>
+                                <Fragment key={rowKey ?? `${symbol}-${row.shortTargetDte}-${row.longTargetDte}-${rowIndex}`}>
                                   <tr className={rowClass}>
                                     <td>
                                       <WatchlistButton
@@ -1969,7 +1969,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                           </tr>
                         </thead>
                         <tbody>
-                          {visibleTopRows.map((row) => {
+                          {visibleTopRows.map((row, rowIndex) => {
                             const rowClass =
                               row.status === "invalid"
                                 ? "row-invalid"
@@ -1989,7 +1989,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                             const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
 
                             return (
-                              <Fragment key={rowKey ?? `${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}`}>
+                              <Fragment key={rowKey ?? `${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}-${rowIndex}`}>
                                 <tr className={rowClass}>
                                   <td>
                                     <WatchlistButton
