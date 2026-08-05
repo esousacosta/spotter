@@ -12,14 +12,19 @@ import { spawn } from 'child_process';
 
 const envLocalPath = path.join(process.cwd(), '.env.local');
 
-// Check if .env.local already exists
+// Read existing .env.local if it exists to preserve AUTH_SECRET
+let existingAuthSecret = null;
 if (fs.existsSync(envLocalPath)) {
-  console.log('✓ .env.local already exists');
-  process.exit(0);
+  const existingContent = fs.readFileSync(envLocalPath, 'utf-8');
+  const match = existingContent.match(/^AUTH_SECRET=(.+)$/m);
+  if (match) {
+    existingAuthSecret = match[1];
+    console.log('✓ .env.local already exists (preserving existing AUTH_SECRET)');
+  }
 }
 
-// Generate a secure AUTH_SECRET
-const authSecret = crypto.randomBytes(32).toString('hex');
+// Generate a new AUTH_SECRET only if one doesn't exist
+const authSecret = existingAuthSecret || crypto.randomBytes(32).toString('hex');
 
 // Create .env.local content
 const envContent = `# Auto-generated environment configuration
@@ -36,7 +41,11 @@ IBKR_GATEWAY_URL=https://localhost:5001
 
 // Write .env.local
 fs.writeFileSync(envLocalPath, envContent, 'utf-8');
-console.log('✓ Created .env.local with full-features configuration');
+if (!existingAuthSecret) {
+  console.log('✓ Created .env.local with full-features configuration');
+} else {
+  console.log('✓ Updated .env.local (kept existing AUTH_SECRET)');
+}
 
 // Ensure data directory exists
 const dataDir = path.join(process.cwd(), 'data');
