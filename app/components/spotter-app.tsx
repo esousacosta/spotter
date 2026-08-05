@@ -1481,7 +1481,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                       </thead>
                       <tbody>
                         {watchForwardRows.map((row) => (
-                          <tr key={row.symbol} className={row.isViable ? "row-viable" : "row-not-viable"}>
+                          <tr key={`${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}-${row.selectedStrike}`} className={row.isViable ? "row-viable" : "row-not-viable"}>
                             <td>
                               <WatchlistButton
                                 active
@@ -1708,7 +1708,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                               const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
 
                               return (
-                                <Fragment key={`${row.shortTargetDte}-${row.longTargetDte}`}>
+                                <Fragment key={rowKey ?? `${row.shortTargetDte}-${row.longTargetDte}`}>
                                   <tr className={rowClass}>
                                     <td>
                                       <WatchlistButton
@@ -1989,7 +1989,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                             const analyticsError = rowKey ? analyticsErrorByRowKey[rowKey] ?? null : null;
 
                             return (
-                              <Fragment key={`${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}`}>
+                              <Fragment key={rowKey ?? `${row.symbol}-${row.shortTargetDte}-${row.longTargetDte}`}>
                                 <tr className={rowClass}>
                                   <td>
                                     <WatchlistButton
@@ -2103,7 +2103,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                     </thead>
                     <tbody>
                       {watchPreRows.map((row) => (
-                        <tr key={row.symbol} className={verdictClass(row)}>
+                        <tr key={`${row.symbol}-${row.nextEarningsDate}`} className={verdictClass(row)}>
                           <td>
                             <WatchlistButton
                               active
@@ -2313,7 +2313,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                       </thead>
                       <tbody>
                         {visiblePreRows.map((row) => (
-                          <tr key={row.symbol} className={verdictClass(row)}>
+                          <tr key={`${row.symbol}-${row.nextEarningsDate}`} className={verdictClass(row)}>
                             <td>
                               <WatchlistButton
                                 active={watchlist.includes(row.symbol)}
