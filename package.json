@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prepare": "node scripts/setup-env.mjs",
+    "setup": "node scripts/setup-env.mjs",
     "dev": "next dev",
     "build": "next build",
     "db:generate": "drizzle-kit generate",
