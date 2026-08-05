@@ -144,11 +144,16 @@ type ForwardVolMetrics =
       forwardVol: number;
       forwardVolEdge: number;
       isViable: boolean;
+      isLowConfidence?: boolean;
     }
   | {
       status: "invalid";
       reason: string;
     };
+
+const STRONGLY_NEGATIVE_VARIANCE_THRESHOLD = -0.0001; // Threshold for "clearly broken"
+const NEAR_ZERO_VARIANCE_FLOOR = 0.00001; // Minimum floor for near-zero variance
+const ENABLE_NEAR_ZERO_VARIANCE_FALLBACK = true;
 
 export function computeForwardVolMetrics(
   ivShort: number,
@@ -174,14 +179,31 @@ export function computeForwardVolMetrics(
     return { status: "invalid", reason: "Invalid tenor pair for forward variance." };
   }
 
-  const forwardVariance =
+  let forwardVariance =
     (varianceLong * tLong - varianceShort * tShort) / denominator;
 
+  let isLowConfidence = false;
+
+  // Handle negative or near-zero variance
   if (forwardVariance < 0) {
-    return {
-      status: "invalid",
-      reason: "Forward variance is negative for this tenor combination.",
-    };
+    if (forwardVariance < STRONGLY_NEGATIVE_VARIANCE_THRESHOLD) {
+      // Clearly broken term structure
+      return {
+        status: "invalid",
+        reason: "Forward variance is strongly negative for this tenor combination.",
+      };
+    }
+
+    if (!ENABLE_NEAR_ZERO_VARIANCE_FALLBACK) {
+      return {
+        status: "invalid",
+        reason: "Forward variance is negative for this tenor combination.",
+      };
+    }
+
+    // Near-zero/slightly negative: clip to floor with low confidence flag
+    forwardVariance = NEAR_ZERO_VARIANCE_FLOOR;
+    isLowConfidence = true;
   }
 
   const forwardVol = Math.sqrt(forwardVariance);
@@ -198,6 +220,7 @@ export function computeForwardVolMetrics(
     forwardVol,
     forwardVolEdge,
     isViable: forwardVolEdge > 0,
+    isLowConfidence,
   };
 }
 

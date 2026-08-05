@@ -316,8 +316,12 @@ export async function computeForwardVolRowsForSymbol(
       let adjustedEdge = metrics.forwardVolEdge;
       let adjustedForwardVol = metrics.forwardVol;
       let notes = EARNINGS_STANDARD_REASON;
+      let isLowConfidence = metrics.isLowConfidence ?? false;
       if (strikeNote) {
         notes = `${notes} ${strikeNote}`;
+      }
+      if (isLowConfidence) {
+        notes = `${notes} Low confidence: near-zero forward variance.`;
       }
       let viable = metrics.forwardVolEdge > MIN_VIABLE_ADJUSTED_EDGE;
       let viabilityTier = getViabilityTier(metrics.forwardVolEdge);
@@ -441,6 +445,7 @@ export async function computeForwardVolRowsForSymbol(
         adjustedForwardVolEdge: adjustedEdge,
         forwardVolEdge: adjustedEdge,
         isViable: viable,
+        isLowConfidence,
         viabilityTier,
         status: "ok" as const,
         notes,

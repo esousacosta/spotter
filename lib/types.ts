@@ -37,6 +37,7 @@ export type ForwardVolRow = {
   adjustedForwardVolEdge: number | null;
   forwardVolEdge: number | null;
   isViable: boolean;
+  isLowConfidence?: boolean;
   viabilityTier?: "viable" | "consider" | "rejected";
   status: "ok" | "invalid";
   notes: string;
