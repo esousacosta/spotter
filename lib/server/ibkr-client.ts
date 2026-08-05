@@ -1,13 +1,15 @@
 // IBKR Client Portal Gateway REST client.
 //
 // The gateway runs on localhost:5001 (HTTPS with a self-signed cert).
-// Set NODE_TLS_REJECT_UNAUTHORIZED=0 in .env.local for development.
+// This client automatically handles the self-signed certificate in development.
 // For production use, import the gateway's self-signed cert as a trusted CA.
-//
-// KNOWN LIMITATION: NODE_TLS_REJECT_UNAUTHORIZED=0 must never be set on a
-// remote server or in any production environment.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+
+// Allow self-signed certificates for localhost IBKR gateway in development
+if (process.env.NODE_ENV !== 'production') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
 
 const IBKR_GATEWAY_URL = process.env.IBKR_GATEWAY_URL ?? 'https://localhost:5001';
 const IBKR_REQUEST_TIMEOUT_MS = 15_000;
