@@ -2572,9 +2572,11 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                     available.
                   </li>
                   <li>
-                    <strong>Early rejection.</strong> Before touching any option chain or historical bar,
-                    symbols are filtered by announced earnings date. Only symbols with confirmed earnings
-                    within the next 21 calendar days proceed further; the rest are skipped immediately.
+                    <strong>Early rejection (pre-earnings only).</strong> In the Pre-earnings scanner,
+                    symbols are filtered by announced earnings date before any option chain or historical bar
+                    is fetched — only symbols with confirmed earnings within the next 21 calendar days
+                    proceed. The Forward Vol scanner has no such filter: it evaluates every S&amp;P 500
+                    symbol regardless of earnings timing.
                   </li>
                   <li>
                     <strong>Fetch option chain.</strong> For each surviving symbol the scanner calls the Cboe
@@ -2789,9 +2791,10 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                     server restart reloads a fresh-enough scan instantly without re-fetching all data.
                   </li>
                   <li>
-                    <strong>Early earnings filter.</strong> Symbols outside the 21-day announced-earnings
-                    window are rejected before any option or historical-bar request is made, keeping cold
-                    scans fast.
+                    <strong>Early earnings filter (pre-earnings only).</strong> In the Pre-earnings scanner,
+                    symbols outside the 21-day announced-earnings window are rejected before any option or
+                    historical-bar request is made, keeping cold scans fast. The Forward Vol scanner does not
+                    apply this filter.
                   </li>
                   <li>
                     <strong>Rate-limit handling.</strong> Cboe requests are paced with a 1,500 ms gap.
