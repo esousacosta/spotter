@@ -7,6 +7,7 @@ import {
   EARNINGS_ANCHOR_LIQUIDITY_REASON,
   EARNINGS_ANCHOR_MISSING_REASON,
   EARNINGS_BASELINE_CONFLICT_REASON,
+  EARNINGS_MISSING_FALLBACK_REASON,
   EARNINGS_MISSING_REASON,
   EARNINGS_MULTI_EVENT_REASON,
   EARNINGS_REJECTED_REASON,
@@ -45,16 +46,16 @@ describe("classifyEarningsContext", () => {
     });
   });
 
-  it("rejects missing earnings data", () => {
+  it("falls back to standard when earnings data is missing", () => {
     const result = classifyEarningsContext({
       nextEarningsDate: null,
       shortExpiryDate: "2026-08-15",
       isReliable: false,
     });
     expect(result).toEqual({
-      state: "ineligible",
-      tradeClass: null,
-      reason: EARNINGS_MISSING_REASON,
+      state: "standard",
+      tradeClass: "standard",
+      reason: EARNINGS_MISSING_FALLBACK_REASON,
     });
   });
 });

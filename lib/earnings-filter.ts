@@ -48,6 +48,8 @@ export const EARNINGS_SAME_DAY_REJECTED_REASON =
   "Rejected because earnings is on the short-call expiration date and same-day event handling is disabled.";
 export const EARNINGS_MISSING_REASON =
   "Rejected because a reliable next earnings date or event-volatility estimate is not available.";
+export const EARNINGS_MISSING_FALLBACK_REASON =
+  "No reliable next earnings date is available, so this row is evaluated without earnings adjustment.";
 export const EARNINGS_ANCHOR_MISSING_REASON =
   "Rejected because no valid pre-earnings anchor expiry is available for ex-earnings adjustment.";
 export const EARNINGS_ANCHOR_LIQUIDITY_REASON =
@@ -117,9 +119,9 @@ export function classifyEarningsContext(input: {
 }): EarningsContextDecision {
   if (!input.isReliable || !input.nextEarningsDate) {
     return {
-      state: "ineligible",
-      tradeClass: null,
-      reason: EARNINGS_MISSING_REASON,
+      state: "standard",
+      tradeClass: "standard",
+      reason: EARNINGS_MISSING_FALLBACK_REASON,
     };
   }
 
