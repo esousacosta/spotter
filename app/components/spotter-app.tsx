@@ -605,7 +605,7 @@ type SpotterAppProps = {
 };
 
 export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
-  const [activeTab, setActiveTab] = useState<"forward" | "preearnings" | "upcomingearnings">("forward");
+  const [activeTab, setActiveTab] = useState<"forward" | "preearnings" | "upcomingearnings" | "howItWorks">("forward");
   const [preEarningsSubtab, setPreEarningsSubtab] = useState<"viable" | "rejected">("viable");
   const [tickers, setTickers] = useState<Ticker[]>([]);
   const [symbol, setSymbol] = useState<string>(DEFAULT_SYMBOL);
@@ -1441,6 +1441,18 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
           <span>
             <strong>Earnings calendar</strong>
             <small>Upcoming announcements</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === "howItWorks" ? "primary-nav-item is-active" : "primary-nav-item"}
+          onClick={() => setActiveTab("howItWorks")}
+          aria-pressed={activeTab === "howItWorks"}
+        >
+          <span className="nav-index">04</span>
+          <span>
+            <strong>How it works</strong>
+            <small>Scanner explained</small>
           </span>
         </button>
       </nav>
@@ -2432,7 +2444,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
             ) : null}
           </section>
           </>
-        ) : (
+        ) : activeTab === "upcomingearnings" ? (
           <section className="panel">
             <div className="section-header section-header--action">
               <div>
@@ -2520,6 +2532,320 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                 <span>Load announced earnings to prepare the next strategy window.</span>
               </div>
             ) : null}
+          </section>
+        ) : (
+          <section className="panel how-it-works-panel">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">Documentation</p>
+                <h2>How the market scanner works</h2>
+                <p className="section-description">
+                  A detailed walkthrough of every stage — from universe loading to ranked results.
+                </p>
+              </div>
+            </div>
+
+            <div className="how-it-works-body">
+
+              <div className="hiw-section">
+                <h3>Overview</h3>
+                <p>
+                  The scanner evaluates every S&amp;P 500 constituent against two complementary frameworks:
+                  the <strong>Forward Volatility</strong> calendar-spread engine (tab 01) and the{" "}
+                  <strong>Pre-earnings viability</strong> engine (tab 02). Both share the same market-data
+                  pipeline but apply different scoring rules and serve different trade styles.
+                </p>
+              </div>
+
+              <div className="hiw-section">
+                <h3>End-to-end pipeline</h3>
+                <ol className="hiw-steps">
+                  <li>
+                    <strong>Load universe.</strong> The app fetches the full S&amp;P 500 constituent list
+                    from a public dataset (with a built-in fallback). This happens once at startup and is
+                    cached so the dropdown is immediately available.
+                  </li>
+                  <li>
+                    <strong>Background warm-up.</strong> As soon as the ticker list is ready the app kicks
+                    off a background scan of the full universe. This spreads the expensive market-data
+                    requests over time so that when you click a scan button the result is already (or nearly)
+                    available.
+                  </li>
+                  <li>
+                    <strong>Early rejection (pre-earnings only).</strong> In the Pre-earnings scanner,
+                    symbols are filtered by announced earnings date before any option chain or historical bar
+                    is fetched — only symbols with confirmed earnings within the next 21 calendar days
+                    proceed. The Forward Vol scanner has no such filter: it evaluates every S&amp;P 500
+                    symbol regardless of earnings timing.
+                  </li>
+                  <li>
+                    <strong>Fetch option chain.</strong> For each surviving symbol the scanner calls the Cboe
+                    delayed-quotes API to retrieve available expiry dates, then fetches the full call and put
+                    chains for each selected expiry.
+                  </li>
+                  <li>
+                    <strong>Select ATM contracts.</strong> For every expiry the scanner finds the call and
+                    put whose strike is nearest to the current spot price. ATM implied volatility (IV) is
+                    computed as the average of the call IV and the put IV for that strike.
+                  </li>
+                  <li>
+                    <strong>Build the IV term structure.</strong> The set of{" "}
+                    <code>(DTE, ATM IV)</code> points is assembled into a linear term structure.
+                    Interpolation at any DTE (e.g. 30 or 45) is derived from this curve.
+                  </li>
+                  <li>
+                    <strong>Compute indicators.</strong> Three quantitative checks are evaluated per symbol
+                    (see indicator definitions below).
+                  </li>
+                  <li>
+                    <strong>Assign verdict.</strong> Each symbol receives a{" "}
+                    <em>recommended</em>, <em>consider</em>, or <em>avoid</em> verdict based on which
+                    indicators pass.
+                  </li>
+                  <li>
+                    <strong>Rank and return.</strong> Viable rows (<em>recommended</em> and{" "}
+                    <em>consider</em>) are ranked and the top N are returned. Rejected symbols are included
+                    in the Rejected tickers subtab with an explicit reason.
+                  </li>
+                </ol>
+              </div>
+
+              <div className="hiw-section">
+                <h3>Indicator definitions</h3>
+
+                <div className="hiw-indicator">
+                  <h4>
+                    <span className="hiw-indicator-badge">1</span>{" "}
+                    Average 30-day volume{" "}
+                    <code className="hiw-code-inline">avg_volume</code>
+                  </h4>
+                  <p>
+                    The mean daily traded volume over the last 30 sessions, sourced from Nasdaq historical
+                    OHLCV data.
+                  </p>
+                  <div className="hiw-formula">
+                    <code>avgVolume30 = mean(volume[−30:])</code>
+                  </div>
+                  <p>
+                    <strong>Pass threshold:</strong> <code>avgVolume30 ≥ 1,500,000</code>
+                  </p>
+                  <p className="hiw-intuition">
+                    <em>Why it matters:</em> low-volume stocks have wide bid/ask spreads in the options
+                    market. Even if the setup looks attractive on paper, execution quality (slippage) can
+                    erase the edge. This filter ensures the stock is liquid enough to fill at a reasonable
+                    price.
+                  </p>
+                </div>
+
+                <div className="hiw-indicator">
+                  <h4>
+                    <span className="hiw-indicator-badge">2</span>{" "}
+                    IV30 / RV30{" "}
+                    <code className="hiw-code-inline">iv30_rv30</code>
+                  </h4>
+                  <p>
+                    <strong>IV30</strong> is the 30-DTE implied volatility interpolated from the ATM IV term
+                    structure. <strong>RV30</strong> is the Yang-Zhang annualized realized volatility
+                    computed from the last 30 daily bars.
+                  </p>
+                  <div className="hiw-formula">
+                    <code>iv30_rv30 = IV30 / RV30</code>
+                  </div>
+                  <p>
+                    <strong>Pass threshold:</strong> <code>iv30_rv30 ≥ 1.25</code>
+                  </p>
+                  <p className="hiw-intuition">
+                    <em>Why it matters:</em> a ratio above 1 means the market is pricing future movement
+                    higher than the stock has actually been moving. A ratio of 1.25 or above signals a clear
+                    volatility premium — the kind of environment where selling premium or running a
+                    short-vol strategy has a statistical edge.
+                  </p>
+                </div>
+
+                <div className="hiw-indicator">
+                  <h4>
+                    <span className="hiw-indicator-badge">3</span>{" "}
+                    Term-structure slope (0 → 45 DTE){" "}
+                    <code className="hiw-code-inline">ts_slope_0_45</code>
+                  </h4>
+                  <p>
+                    The slope of the IV term structure measured between the first valid near-term expiry and
+                    the 45-DTE interpolated point.
+                  </p>
+                  <div className="hiw-formula">
+                    <code>tsSlope0To45 = (IV(45) − IV(dteFirst)) / (45 − dteFirst)</code>
+                  </div>
+                  <p>
+                    <strong>Pass threshold:</strong> <code>tsSlope0To45 ≤ −0.00406</code>
+                  </p>
+                  <p className="hiw-intuition">
+                    <em>Why it matters:</em> a sufficiently negative slope means front-end IV is elevated
+                    relative to medium-term IV — i.e. the near-term expiry is &ldquo;expensive&rdquo;
+                    relative to further-out expiries. This shape is consistent with pre-earnings richness and
+                    supports short-premium strategies where you sell the expensive near-term vol.
+                  </p>
+                </div>
+              </div>
+
+              <div className="hiw-section">
+                <h3>Forward Volatility Edge (tab 01)</h3>
+                <p>
+                  In addition to the three viability indicators the Forward Vol tab computes a{" "}
+                  <strong>Forward Volatility Edge</strong> for every short/long expiry pair you select.
+                </p>
+                <div className="hiw-formula">
+                  <code>forwardVariance = (IV_long² × T_long − IV_short² × T_short) / (T_long − T_short)</code>
+                  <br />
+                  <code>forwardVol = √max(forwardVariance, 0)</code>
+                  <br />
+                  <code>forwardVolEdge = IV_short / forwardVol − 1</code>
+                </div>
+                <p>
+                  A <strong>positive edge</strong> means the short-dated IV is higher than the implied
+                  forward volatility between the two expiries — the market is pricing the near leg richer
+                  than the far leg, which is the core signal for a calendar spread entry.
+                </p>
+                <p>
+                  Default target pairs are <strong>30/60</strong>, <strong>45/75</strong>, and{" "}
+                  <strong>60/90</strong> DTE. When exact expiries do not exist the scanner selects the
+                  nearest available expiry subject to a minimum 7-day gap between legs.
+                </p>
+              </div>
+
+              <div className="hiw-section">
+                <h3>Verdict logic</h3>
+                <div className="hiw-verdict-grid">
+                  <div className="hiw-verdict hiw-verdict--recommended">
+                    <strong>Recommended</strong>
+                    <p>All three indicators pass: volume ✓, IV30/RV30 ✓, term-structure slope ✓.</p>
+                    <p className="hiw-intuition">Strongest-conviction bucket. All conditions align.</p>
+                  </div>
+                  <div className="hiw-verdict hiw-verdict--consider">
+                    <strong>Consider</strong>
+                    <p>
+                      Term-structure slope passes <strong>and</strong> exactly one of volume or IV30/RV30
+                      also passes.
+                    </p>
+                    <p className="hiw-intuition">
+                      Worth a manual review. The curve shape supports the setup but one confirming signal is
+                      missing.
+                    </p>
+                  </div>
+                  <div className="hiw-verdict hiw-verdict--avoid">
+                    <strong>Avoid</strong>
+                    <p>All other combinations.</p>
+                    <p className="hiw-intuition">
+                      Liquidity is weak, vol premium is insufficient, or the term-structure shape is
+                      unfavorable.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="hiw-section">
+                <h3>Ranking order</h3>
+                <p>Viable results are returned ranked by the following priority (highest first):</p>
+                <ol className="hiw-rank-list">
+                  <li>Symbols with earnings <strong>today</strong> (using the US market calendar date).</li>
+                  <li>Earliest announced earnings date among remaining symbols.</li>
+                  <li>
+                    Verdict priority: <em>recommended</em> &gt; <em>consider</em>.
+                  </li>
+                  <li>Higher <code>iv30_rv30</code> ratio.</li>
+                  <li>
+                    More favorable term-structure slope (more negative <code>tsSlope0To45</code>).
+                  </li>
+                </ol>
+              </div>
+
+              <div className="hiw-section">
+                <h3>Expected move</h3>
+                <p>
+                  Displayed as context (not a pass/fail rule). The expected move is estimated from the ATM
+                  straddle price at the first near-term expiry:
+                </p>
+                <div className="hiw-formula">
+                  <code>straddle = callMid + putMid</code>
+                  <br />
+                  <code>expectedMovePct = (straddle / spot) × 100</code>
+                </div>
+                <p>
+                  This gives a quick sense of how much the market is pricing the stock to move by expiry —
+                  useful for sizing and risk-management but not used in the viability verdict.
+                </p>
+              </div>
+
+              <div className="hiw-section">
+                <h3>Performance safeguards</h3>
+                <ul className="hiw-safeguards">
+                  <li>
+                    <strong>In-flight deduplication.</strong> If two requests for the same symbol arrive
+                    simultaneously, only one option-chain fetch is made; both callers share the result.
+                  </li>
+                  <li>
+                    <strong>60-minute cache.</strong> Option chains and completed pre-earnings scan snapshots
+                    are cached for 60 minutes and reused across button clicks and server restarts.
+                  </li>
+                  <li>
+                    <strong>Disk persistence.</strong> Completed scan snapshots are written to disk so a
+                    server restart reloads a fresh-enough scan instantly without re-fetching all data.
+                  </li>
+                  <li>
+                    <strong>Early earnings filter (pre-earnings only).</strong> In the Pre-earnings scanner,
+                    symbols outside the 21-day announced-earnings window are rejected before any option or
+                    historical-bar request is made, keeping cold scans fast. The Forward Vol scanner does not
+                    apply this filter.
+                  </li>
+                  <li>
+                    <strong>Rate-limit handling.</strong> Cboe requests are paced with a 1,500 ms gap.
+                    Symbols that hit HTTP 429 / Cloudflare 1015 are retried up to 5 times with progressive
+                    back-off before being marked as data-failed.
+                  </li>
+                  <li>
+                    <strong>UI timeout guard.</strong> All UI-triggered API calls are wrapped with a 30-second
+                    (60 s for forward-vol) timeout so loading states cannot hang indefinitely.
+                  </li>
+                  <li>
+                    <strong>Non-blocking scan return.</strong> The endpoint returns the latest cached
+                    snapshot immediately while a background scan continues. The UI auto-refreshes
+                    progress, so the button never blocks waiting for the full scan to finish.
+                  </li>
+                </ul>
+              </div>
+
+              <div className="hiw-section">
+                <h3>Data sources</h3>
+                <ul className="hiw-sources">
+                  <li>
+                    <strong>Option chains:</strong> Cboe delayed-quotes options API
+                  </li>
+                  <li>
+                    <strong>Historical OHLCV (volume &amp; RV30):</strong> Nasdaq historical quote API
+                  </li>
+                  <li>
+                    <strong>Earnings calendar:</strong> Nasdaq earnings calendar API
+                  </li>
+                  <li>
+                    <strong>S&amp;P 500 universe:</strong> public constituents dataset with built-in fallback
+                  </li>
+                </ul>
+                <p className="hiw-intuition">
+                  All market data is delayed (not real-time). Prices and IV values reflect the latest
+                  available delayed snapshot from each provider.
+                </p>
+              </div>
+
+              <div className="hiw-section">
+                <h3>What this tool does not do</h3>
+                <ul className="hiw-nongoals">
+                  <li>Place or route trades.</li>
+                  <li>Backtest strategy performance.</li>
+                  <li>Enforce liquidity filters beyond the average-volume indicator.</li>
+                  <li>Provide real-time streaming quotes.</li>
+                </ul>
+              </div>
+
+            </div>
           </section>
         )}
       </div>
