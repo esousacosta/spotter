@@ -1507,7 +1507,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                             <td>{row.tradeClass ?? "—"}</td>
                             <td>{asPct(row.adjustedForwardVolEdge)}</td>
                             <td>{asPct(row.forwardVol)}</td>
-                            <td>{row.nextEarningsDate ?? "—"}</td>
+                            <td>{row.nextEarningsDate ?? "No next earnings date available (likely too far in the future)."}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1747,7 +1747,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                                     <td>
                                       {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
                                     </td>
-                                    <td>{row.nextEarningsDate ?? "—"}</td>
+                                    <td>{row.nextEarningsDate ?? "No next earnings date available (likely too far in the future)."}</td>
                                     <td>{asNumber(row.selectedStrike)}</td>
                                     <td>{asPct(row.ivShort)}</td>
                                     <td>{asPct(row.ivLong)}</td>
@@ -2030,7 +2030,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                                   <td>
                                     {asNumber(row.shortDteActual)} / {asNumber(row.longDteActual)}
                                   </td>
-                                  <td>{row.nextEarningsDate ?? "—"}</td>
+                                  <td>{row.nextEarningsDate ?? "No next earnings date available (likely too far in the future)."}</td>
                                   <td>{asNumber(row.selectedStrike)}</td>
                                   <td>{asPct(row.ivShort)}</td>
                                   <td>{asPct(row.ivLong)}</td>
@@ -2336,7 +2336,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                             </td>
                             <td className="cell-emphasis">{row.symbol}</td>
                             <td>{row.companyName}</td>
-                            <td>{row.nextEarningsDate ?? "—"}</td>
+                            <td>{row.nextEarningsDate ?? "No next earnings date available (likely too far in the future)."}</td>
                             <td>{daysUntilEarnings(row.nextEarningsDate)}</td>
                             <td>{row.earningsSession ?? "—"}</td>
                             <td>
@@ -2410,7 +2410,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                             </td>
                             <td className="cell-emphasis">{row.symbol}</td>
                             <td>{row.companyName}</td>
-                            <td>{row.nextEarningsDate ?? "—"}</td>
+                            <td>{row.nextEarningsDate ?? "No next earnings date available (likely too far in the future)."}</td>
                             <td>{row.earningsSession ?? "—"}</td>
                             <td>
                               <span className="status-pill">{row.rejectionCategory}</span>
