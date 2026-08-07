@@ -251,27 +251,7 @@ async function processScan(
     const daysToEarnings =
       nextEarningsDate !== null ? dayDiffIso(todayIso, nextEarningsDate) : null;
 
-    if (nextEarningsDate === null || daysToEarnings === null) {
-      state.evaluatedSymbols += 1;
-      state.rejectedRows.push(
-        buildRejectedRow(ticker, null, earningsInfo?.releaseSession ?? null, {
-          rejectionCategory: "criteria",
-          rejectionStage: "Earnings timing",
-          rejectionReason:
-            "No upcoming announced earnings date was available, so this symbol is outside the pre-earnings scan scope.",
-          wasComputed: false,
-          underlyingPrice: null,
-          expectedMove: null,
-          avgVolume30: null,
-          iv30Rv30: null,
-          tsSlope0To45: null,
-          avgVolumePass: null,
-          iv30Rv30Pass: null,
-          tsSlopePass: null,
-          verdict: null,
-        }),
-      );
-    } else if (daysToEarnings < 0 || daysToEarnings > PRE_EARNINGS_WINDOW_DAYS) {
+    if (nextEarningsDate !== null && daysToEarnings !== null && (daysToEarnings < 0 || daysToEarnings > PRE_EARNINGS_WINDOW_DAYS)) {
       state.evaluatedSymbols += 1;
       state.rejectedRows.push(
         buildRejectedRow(ticker, nextEarningsDate, earningsInfo?.releaseSession ?? null, {
