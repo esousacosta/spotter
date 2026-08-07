@@ -1265,3 +1265,204 @@ tbody tr:not(.row-drilldown):hover {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── How it works tab ─────────────────────────────────────────── */
+
+.how-it-works-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+  margin-top: 1.5rem;
+}
+
+.hiw-section {
+  border-top: 1px solid var(--border);
+  padding-top: 1.5rem;
+}
+
+.hiw-section:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.hiw-section h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0 0 0.75rem;
+  color: var(--text);
+}
+
+.hiw-section p {
+  margin: 0 0 0.75rem;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+.hiw-section p:last-child {
+  margin-bottom: 0;
+}
+
+.hiw-steps,
+.hiw-rank-list {
+  margin: 0 0 0 1.25rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.hiw-steps li,
+.hiw-rank-list li {
+  padding-left: 0.25rem;
+}
+
+.hiw-indicator {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.hiw-indicator:last-child {
+  margin-bottom: 0;
+}
+
+.hiw-indicator h4 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 0 0.75rem;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+
+.hiw-indicator p {
+  margin: 0 0 0.6rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.hiw-indicator-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.hiw-code-inline {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.78rem;
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+  color: var(--blue);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+}
+
+.hiw-formula {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border-left: 3px solid var(--blue);
+  border-radius: 0 6px 6px 0;
+  padding: 0.6rem 1rem;
+  margin: 0.5rem 0 0.75rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.8rem;
+  color: var(--text);
+  line-height: 1.7;
+  overflow-x: auto;
+}
+
+.hiw-intuition {
+  font-size: 0.82rem !important;
+  font-style: italic;
+  color: color-mix(in srgb, var(--text-muted) 80%, transparent) !important;
+}
+
+.hiw-verdict-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.hiw-verdict {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.hiw-verdict strong {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.hiw-verdict p {
+  font-size: 0.82rem;
+  margin: 0 0 0.4rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.hiw-verdict p:last-child {
+  margin-bottom: 0;
+}
+
+.hiw-verdict--recommended {
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+  background: color-mix(in srgb, var(--green) 6%, transparent);
+}
+
+.hiw-verdict--recommended strong {
+  color: var(--green);
+}
+
+.hiw-verdict--consider {
+  border-color: color-mix(in srgb, var(--yellow) 40%, transparent);
+  background: color-mix(in srgb, var(--yellow) 6%, transparent);
+}
+
+.hiw-verdict--consider strong {
+  color: var(--yellow);
+}
+
+.hiw-verdict--avoid {
+  border-color: color-mix(in srgb, var(--red) 35%, transparent);
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+}
+
+.hiw-verdict--avoid strong {
+  color: var(--red);
+}
+
+.hiw-safeguards,
+.hiw-sources,
+.hiw-nongoals {
+  margin: 0 0 0 1.25rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  line-height: 1.65;
+  font-size: 0.875rem;
+}
+
+.hiw-safeguards li,
+.hiw-sources li,
+.hiw-nongoals li {
+  padding-left: 0.25rem;
+}
+
