@@ -1,7 +1,8 @@
 import {
-  getOptionDataProvider,
+  resolveOptionDataProvider,
   isOptionSnapshotStale,
   marketDataProvider,
+  type OptionDataProvider,
   type OptionContract,
 } from "@/lib/server/market-data-provider";
 import type { EarningsInfo } from "@/lib/server/earnings-provider";
@@ -218,9 +219,10 @@ export async function computePreEarningsRow(
   ticker: Ticker,
   earningsInfo: EarningsInfo | null = null,
   now: Date = new Date(),
-  optionProvider: ReturnType<typeof getOptionDataProvider> = getOptionDataProvider(),
+  optionProvider?: OptionDataProvider,
 ): Promise<PreEarningsScanResult> {
-  const snapshot = await optionProvider.getOptionSnapshot(ticker.symbol);
+  const provider = optionProvider ?? await resolveOptionDataProvider();
+  const snapshot = await provider.getOptionSnapshot(ticker.symbol);
   const snapshotIsStale = isOptionSnapshotStale(snapshot);
   const rejectedRow = (overrides: RejectedRowOverrides): PreEarningsRejectedRow =>
     baseRejectedRow(ticker, earningsInfo, { ...overrides, isStale: snapshotIsStale });
@@ -250,8 +252,8 @@ export async function computePreEarningsRow(
   const chains = await Promise.all(
     filteredExpiries.map(async (expiryUnix) => {
       const [calls, puts] = await Promise.all([
-        optionProvider.getOptionChainCalls(ticker.symbol, expiryUnix),
-        optionProvider.getOptionChainPuts(ticker.symbol, expiryUnix),
+        provider.getOptionChainCalls(ticker.symbol, expiryUnix),
+        provider.getOptionChainPuts(ticker.symbol, expiryUnix),
       ]);
       return { expiryUnix, calls, puts };
     }),

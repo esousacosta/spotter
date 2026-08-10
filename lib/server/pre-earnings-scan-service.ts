@@ -6,8 +6,7 @@ import { getMarketDateIso } from "@/lib/market-time";
 import { comparePreEarningsRows, compareRejectedPreEarningsRows } from "@/lib/pre-earnings-ranking";
 import { getCacheDirectoryPath } from "@/lib/server/cache";
 import { getNextEarningsForSymbols } from "@/lib/server/earnings-provider";
-import { ibkrMarketDataProvider } from "@/lib/server/ibkr-market-data-provider";
-import { marketDataProvider, getOptionDataProvider } from "@/lib/server/market-data-provider";
+import { marketDataProvider, resolveOptionDataProvider, type OptionDataProvider } from "@/lib/server/market-data-provider";
 import { computePreEarningsRow } from "@/lib/server/pre-earnings-service";
 import type {
   PreEarningsRejectedRow,
@@ -235,7 +234,7 @@ async function processScan(
   state: ScanState,
   tickers: Ticker[],
   generation: number,
-  optionProvider: ReturnType<typeof getOptionDataProvider>,
+  optionProvider: OptionDataProvider,
   scanConcurrency: number,
   interBatchPauseMs: number,
 ): Promise<void> {
@@ -398,13 +397,7 @@ async function startScan(scanLimit: number): Promise<ScanState> {
 
     const { isIbkrAvailable } = await import("@/lib/server/ibkr-client");
     const ibkrAvailable = await isIbkrAvailable();
-    const optionProvider = ibkrAvailable
-      ? ibkrMarketDataProvider
-      : {
-          getOptionSnapshot: (s: string) => marketDataProvider.getOptionSnapshot(s),
-          getOptionChainCalls: (s: string, e: number) => marketDataProvider.getOptionChainCalls(s, e),
-          getOptionChainPuts: (s: string, e: number) => marketDataProvider.getOptionChainPuts(s, e),
-        };
+    const optionProvider = await resolveOptionDataProvider();
     const scanConcurrency = ibkrAvailable ? IBKR_SCAN_CONCURRENCY : CBOE_SCAN_CONCURRENCY;
     const interBatchPauseMs = ibkrAvailable ? IBKR_INTER_BATCH_PAUSE_MS : CBOE_INTER_BATCH_PAUSE_MS;
     console.info(`[pre-earnings] scan starting with ${ibkrAvailable ? "IBKR live" : "Cboe delayed"} quotes (concurrency=${scanConcurrency}).`);
