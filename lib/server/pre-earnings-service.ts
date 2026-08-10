@@ -218,8 +218,8 @@ export async function computePreEarningsRow(
   ticker: Ticker,
   earningsInfo: EarningsInfo | null = null,
   now: Date = new Date(),
+  optionProvider: ReturnType<typeof getOptionDataProvider> = getOptionDataProvider(),
 ): Promise<PreEarningsScanResult> {
-  const optionProvider = getOptionDataProvider();
   const snapshot = await optionProvider.getOptionSnapshot(ticker.symbol);
   const snapshotIsStale = isOptionSnapshotStale(snapshot);
   const rejectedRow = (overrides: RejectedRowOverrides): PreEarningsRejectedRow =>

@@ -15,11 +15,8 @@ const requestSchema = z.object({
   topN: z.number().int().positive().optional(),
 });
 
-const isLiveMode = process.env.IBKR_DISABLED !== 'true';
-// Cboe pacing requires strict sequential processing.
-// IBKR requests are globally paced below the gateway's 10 req/s limit, so a
-// larger worker pool can overlap contract processing without creating bursts.
-const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
+const IBKR_SCAN_CONCURRENCY = 5;
+const CBOE_SCAN_CONCURRENCY = 1;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type TopScanState = {
@@ -92,6 +89,11 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
 
   state.scannedSymbols = tickers.length;
 
+  const { isIbkrAvailable } = await import("@/lib/server/ibkr-client");
+  const ibkrAvailable = await isIbkrAvailable();
+  const scanConcurrency = ibkrAvailable ? IBKR_SCAN_CONCURRENCY : CBOE_SCAN_CONCURRENCY;
+  console.info(`[top-forward-vol] scan starting with ${ibkrAvailable ? "IBKR live" : "Cboe delayed"} quotes (concurrency=${scanConcurrency}).`);
+
   const rejectionCounts: Record<string, number> = {
     no_valid_expiry_pair: 0,
     earnings_ineligible: 0,
@@ -103,7 +105,7 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
     failed_earnings_evaluation: 0,
   };
 
-  await runWithConcurrency(tickers, SCAN_CONCURRENCY, async (ticker) => {
+  await runWithConcurrency(tickers, scanConcurrency, async (ticker) => {
     if (generation !== topScanGeneration) {
       return;
     }

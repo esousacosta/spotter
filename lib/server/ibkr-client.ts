@@ -557,6 +557,16 @@ export async function getAuthStatus(): Promise<IbkrAuthStatus> {
   return ibkrFetch<IbkrAuthStatus>('/v1/api/iserver/auth/status');
 }
 
+/** Returns true if the IBKR gateway is reachable and authenticated. */
+export async function isIbkrAvailable(): Promise<boolean> {
+  try {
+    const status = await getAuthStatus();
+    return status.authenticated === true;
+  } catch {
+    return false;
+  }
+}
+
 const KEEPALIVE_INTERVAL_MS = 3 * 60 * 1_000;
 
 export function startIbkrKeepalive(): void {
