@@ -574,6 +574,14 @@ input {
   line-height: 1.45;
 }
 
+.results-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
 .filter-chips {
   display: flex;
   flex-wrap: wrap;
@@ -1165,6 +1173,11 @@ tbody tr:not(.row-drilldown):hover {
     flex-direction: column;
   }
 
+  .results-actions {
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
   .segmented-control {
     align-self: flex-start;
   }
@@ -1465,4 +1478,3 @@ tbody tr:not(.row-drilldown):hover {
 .hiw-nongoals li {
   padding-left: 0.25rem;
 }
-

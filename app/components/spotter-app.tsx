@@ -11,6 +11,7 @@ import {
   toggleExpandedRow,
 } from "@/lib/forward-trade-drilldown";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
+import { buildMarketScanHtml, marketScanHtmlFilename } from "@/lib/market-scan-html";
 import { sortRows, toggleSort, type SortConfig } from "@/lib/table-sort";
 import { loadWatchlist, saveWatchlist } from "@/lib/watchlist";
 import type {
@@ -1257,6 +1258,22 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
     }
   }
 
+  function exportViableTopRows(): void {
+    if (!topScanMeta || viableTopRows.length === 0) {
+      return;
+    }
+
+    const html = buildMarketScanHtml(viableTopRows, topScanMeta.asOf);
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = marketScanHtmlFilename(topScanMeta.asOf);
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function loadPreEarningsRows(silent = false) {
     preScanLoaded.current = true;
     if (!silent) {
@@ -1902,44 +1919,54 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                       <h3>Market scan results</h3>
                       <p>Sorted by forward volatility edge within each result group.</p>
                     </div>
-                    <div className="filter-chips" aria-label="Filter market scan results">
+                    <div className="results-actions">
                       <button
                         type="button"
-                        className={topForwardFilters.viableOnly ? "chip chip-active" : "chip"}
-                        onClick={() =>
-                          setTopForwardFilters((current) => ({ ...current, viableOnly: !current.viableOnly }))
-                        }
-                        aria-pressed={topForwardFilters.viableOnly}
+                        className="button-secondary button-compact"
+                        onClick={exportViableTopRows}
+                        disabled={viableTopRows.length === 0}
                       >
-                        Viable only
+                        Export viable trades (HTML)
                       </button>
-                      <button
-                        type="button"
-                        className={topForwardFilters.tradeClass === "standard" ? "chip chip-active" : "chip"}
-                        onClick={() =>
-                          setTopForwardFilters((current) => ({
-                            ...current,
-                            tradeClass: current.tradeClass === "standard" ? "all" : "standard",
-                          }))
-                        }
-                        aria-pressed={topForwardFilters.tradeClass === "standard"}
-                      >
-                        Standard trades
-                      </button>
-                      <button
-                        type="button"
-                        className={topForwardFilters.tradeClass === "earnings-exposed" ? "chip chip-active" : "chip"}
-                        onClick={() =>
-                          setTopForwardFilters((current) => ({
-                            ...current,
-                            tradeClass:
-                              current.tradeClass === "earnings-exposed" ? "all" : "earnings-exposed",
-                          }))
-                        }
-                        aria-pressed={topForwardFilters.tradeClass === "earnings-exposed"}
-                      >
-                        Earnings-exposed
-                      </button>
+                      <div className="filter-chips" aria-label="Filter market scan results">
+                        <button
+                          type="button"
+                          className={topForwardFilters.viableOnly ? "chip chip-active" : "chip"}
+                          onClick={() =>
+                            setTopForwardFilters((current) => ({ ...current, viableOnly: !current.viableOnly }))
+                          }
+                          aria-pressed={topForwardFilters.viableOnly}
+                        >
+                          Viable only
+                        </button>
+                        <button
+                          type="button"
+                          className={topForwardFilters.tradeClass === "standard" ? "chip chip-active" : "chip"}
+                          onClick={() =>
+                            setTopForwardFilters((current) => ({
+                              ...current,
+                              tradeClass: current.tradeClass === "standard" ? "all" : "standard",
+                            }))
+                          }
+                          aria-pressed={topForwardFilters.tradeClass === "standard"}
+                        >
+                          Standard trades
+                        </button>
+                        <button
+                          type="button"
+                          className={topForwardFilters.tradeClass === "earnings-exposed" ? "chip chip-active" : "chip"}
+                          onClick={() =>
+                            setTopForwardFilters((current) => ({
+                              ...current,
+                              tradeClass:
+                                current.tradeClass === "earnings-exposed" ? "all" : "earnings-exposed",
+                            }))
+                          }
+                          aria-pressed={topForwardFilters.tradeClass === "earnings-exposed"}
+                        >
+                          Earnings-exposed
+                        </button>
+                      </div>
                     </div>
                   </div>
 
