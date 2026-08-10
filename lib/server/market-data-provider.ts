@@ -539,13 +539,29 @@ export type OptionDataProvider = {
 export type OptionDataSource = "ibkr" | "cboe";
 
 const IBKR_AVAILABILITY_TTL_MS = 30_000;
+const IBKR_UNAVAILABLE_CONFIRMATIONS = 3;
 let ibkrAvailabilityCache: { value: boolean; expiresAtMs: number } | null = null;
+let consecutiveIbkrUnavailableChecks = 0;
 
-export function recordIbkrAvailability(available: boolean): void {
+export function recordIbkrAvailability(available: boolean): boolean {
+  if (available) {
+    consecutiveIbkrUnavailableChecks = 0;
+    ibkrAvailabilityCache = {
+      value: true,
+      expiresAtMs: Date.now() + IBKR_AVAILABILITY_TTL_MS,
+    };
+    return true;
+  }
+
+  consecutiveIbkrUnavailableChecks += 1;
+  const wasAvailable = ibkrAvailabilityCache?.value === true;
+  const effectiveAvailability =
+    wasAvailable && consecutiveIbkrUnavailableChecks < IBKR_UNAVAILABLE_CONFIRMATIONS;
   ibkrAvailabilityCache = {
-    value: available,
+    value: effectiveAvailability,
     expiresAtMs: Date.now() + IBKR_AVAILABILITY_TTL_MS,
   };
+  return effectiveAvailability;
 }
 
 async function checkIbkrAvailable(): Promise<boolean> {
@@ -555,8 +571,7 @@ async function checkIbkrAvailable(): Promise<boolean> {
   }
   const { isIbkrAvailable } = await import("@/lib/server/ibkr-client");
   const available = await isIbkrAvailable();
-  recordIbkrAvailability(available);
-  return available;
+  return recordIbkrAvailability(available);
 }
 
 const cboeOptionProvider: OptionDataProvider = {

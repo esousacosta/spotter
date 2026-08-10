@@ -185,6 +185,23 @@ describe("resolveOptionDataProvider provider selection", () => {
     recordIbkrAvailability(true);
     expect((await resolveOptionDataSource()).source).toBe("ibkr");
   });
+
+  it("keeps IBKR active through brief gateway-status failures", async () => {
+    const {
+      recordIbkrAvailability,
+      resolveOptionDataSource,
+    } = await import("./market-data-provider");
+
+    recordIbkrAvailability(true);
+    recordIbkrAvailability(false);
+    expect((await resolveOptionDataSource()).source).toBe("ibkr");
+
+    recordIbkrAvailability(false);
+    expect((await resolveOptionDataSource()).source).toBe("ibkr");
+
+    recordIbkrAvailability(false);
+    expect((await resolveOptionDataSource()).source).toBe("cboe");
+  });
 });
 
 describe("parseMonthCode", () => {

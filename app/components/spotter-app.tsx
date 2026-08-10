@@ -764,13 +764,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
         setIbkrStatus(payload);
 
         if (becameLive) {
-          await Promise.all([
-            fetchWithTimeout("/api/cache", { method: "DELETE" }, UI_REQUEST_TIMEOUT_MS),
-            fetchWithTimeout("/api/top-forward-vol", { method: "DELETE" }, UI_REQUEST_TIMEOUT_MS),
-          ]);
-          if (!cancelled) {
-            setQuoteSourceVersion((version) => version + 1);
-          }
+          setQuoteSourceVersion((version) => version + 1);
         }
       } catch {
         if (!cancelled) {
