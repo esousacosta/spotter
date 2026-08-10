@@ -172,6 +172,19 @@ describe("resolveOptionDataProvider provider selection", () => {
     expect(provider).not.toBe(ibkrMarketDataProvider);
     expect(typeof provider.getOptionSnapshot).toBe("function");
   });
+
+  it("switches immediately from cached Cboe mode to IBKR after authentication", async () => {
+    const {
+      recordIbkrAvailability,
+      resolveOptionDataSource,
+    } = await import("./market-data-provider");
+
+    recordIbkrAvailability(false);
+    expect((await resolveOptionDataSource()).source).toBe("cboe");
+
+    recordIbkrAvailability(true);
+    expect((await resolveOptionDataSource()).source).toBe("ibkr");
+  });
 });
 
 describe("parseMonthCode", () => {
