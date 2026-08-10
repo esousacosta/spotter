@@ -6,7 +6,8 @@ import { getMarketDateIso } from "@/lib/market-time";
 import { comparePreEarningsRows, compareRejectedPreEarningsRows } from "@/lib/pre-earnings-ranking";
 import { getCacheDirectoryPath } from "@/lib/server/cache";
 import { getNextEarningsForSymbols } from "@/lib/server/earnings-provider";
-import { marketDataProvider } from "@/lib/server/market-data-provider";
+import { ibkrMarketDataProvider } from "@/lib/server/ibkr-market-data-provider";
+import { marketDataProvider, getOptionDataProvider } from "@/lib/server/market-data-provider";
 import { computePreEarningsRow } from "@/lib/server/pre-earnings-service";
 import type {
   PreEarningsRejectedRow,
@@ -15,13 +16,14 @@ import type {
   Ticker,
 } from "@/lib/types";
 
-const isLiveMode = process.env.IBKR_DISABLED !== 'true';
 // Cboe requires strict sequential processing with inter-batch pauses to avoid 429s.
 // IBKR requests are globally paced below the gateway's 10 req/s limit, so a
 // larger worker pool can overlap contract processing without creating bursts.
-const SCAN_CONCURRENCY = isLiveMode ? 5 : 1;
+const IBKR_SCAN_CONCURRENCY = 5;
+const CBOE_SCAN_CONCURRENCY = 1;
 const BATCH_SIZE = 5;
-const INTER_BATCH_PAUSE_MS = isLiveMode ? 0 : 5_000;
+const IBKR_INTER_BATCH_PAUSE_MS = 0;
+const CBOE_INTER_BATCH_PAUSE_MS = 5_000;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 const PRE_EARNINGS_WINDOW_DAYS = 21;
 const MAX_THROTTLED_SYMBOL_RETRIES = 2;
@@ -233,6 +235,9 @@ async function processScan(
   state: ScanState,
   tickers: Ticker[],
   generation: number,
+  optionProvider: ReturnType<typeof getOptionDataProvider>,
+  scanConcurrency: number,
+  interBatchPauseMs: number,
 ): Promise<void> {
   const now = new Date(state.asOf);
   const todayIso = getMarketDateIso(now);
@@ -277,7 +282,7 @@ async function processScan(
       let completed = false;
       for (let retryAttempt = 0; retryAttempt <= MAX_THROTTLED_SYMBOL_RETRIES; retryAttempt += 1) {
         try {
-          const result = await computePreEarningsRow(ticker, earningsInfo, now);
+          const result = await computePreEarningsRow(ticker, earningsInfo, now, optionProvider);
           state.evaluatedSymbols += 1;
           if (result.outcome === "viable") {
             state.computedSymbols += 1;
@@ -338,13 +343,13 @@ async function processScan(
     }
 
     // Cboe only: pause after every BATCH_SIZE symbols to stay under the rate limit.
-    if (INTER_BATCH_PAUSE_MS > 0 && (index + 1) % BATCH_SIZE === 0 && index + 1 < tickers.length) {
-      console.info(`[pre-earnings] processed ${index + 1}/${tickers.length}; pausing ${INTER_BATCH_PAUSE_MS}ms`);
-      await sleep(INTER_BATCH_PAUSE_MS);
+    if (interBatchPauseMs > 0 && (index + 1) % BATCH_SIZE === 0 && index + 1 < tickers.length) {
+      console.info(`[pre-earnings] processed ${index + 1}/${tickers.length}; pausing ${interBatchPauseMs}ms`);
+      await sleep(interBatchPauseMs);
     }
   }
 
-  await runWithConcurrency(tickers, SCAN_CONCURRENCY, processOneTicker);
+  await runWithConcurrency(tickers, scanConcurrency, processOneTicker);
 }
 
 
@@ -390,7 +395,21 @@ async function startScan(scanLimit: number): Promise<ScanState> {
     const allTickers = await marketDataProvider.getSP500Tickers();
     const tickers = allTickers.slice(0, scanLimit);
     state.scannedSymbols = tickers.length;
-    await processScan(state, tickers, generation);
+
+    const { isIbkrAvailable } = await import("@/lib/server/ibkr-client");
+    const ibkrAvailable = await isIbkrAvailable();
+    const optionProvider = ibkrAvailable
+      ? ibkrMarketDataProvider
+      : {
+          getOptionSnapshot: (s: string) => marketDataProvider.getOptionSnapshot(s),
+          getOptionChainCalls: (s: string, e: number) => marketDataProvider.getOptionChainCalls(s, e),
+          getOptionChainPuts: (s: string, e: number) => marketDataProvider.getOptionChainPuts(s, e),
+        };
+    const scanConcurrency = ibkrAvailable ? IBKR_SCAN_CONCURRENCY : CBOE_SCAN_CONCURRENCY;
+    const interBatchPauseMs = ibkrAvailable ? IBKR_INTER_BATCH_PAUSE_MS : CBOE_INTER_BATCH_PAUSE_MS;
+    console.info(`[pre-earnings] scan starting with ${ibkrAvailable ? "IBKR live" : "Cboe delayed"} quotes (concurrency=${scanConcurrency}).`);
+
+    await processScan(state, tickers, generation, optionProvider, scanConcurrency, interBatchPauseMs);
   })()
     .then(async () => {
       if (generation !== scanGeneration) return;

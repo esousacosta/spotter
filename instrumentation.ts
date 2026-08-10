@@ -3,25 +3,26 @@ export async function register() {
     return;
   }
 
-  if (process.env.IBKR_DISABLED !== "true") {
-    try {
-      const { startIbkrKeepalive } = await import("@/lib/server/ibkr-client");
-      startIbkrKeepalive();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown error";
-      console.warn(`[instrumentation] failed to start IBKR keepalive: ${message}`);
-    }
+  // Always start the IBKR keepalive — it will fail gracefully if not connected.
+  try {
+    const { startIbkrKeepalive } = await import("@/lib/server/ibkr-client");
+    startIbkrKeepalive();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    console.warn(`[instrumentation] failed to start IBKR keepalive: ${message}`);
   }
 
-  // Pre-earnings warmup fan-outs hundreds of option-chain requests.
-  // Keep it for delayed mode, but skip in IBKR live mode to avoid startup bursts.
-  if (process.env.IBKR_DISABLED === "true") {
-    try {
+  // Pre-earnings warmup fans out hundreds of option-chain requests.
+  // Skip in IBKR live mode to avoid startup bursts; use Cboe when offline.
+  try {
+    const { isIbkrAvailable } = await import("@/lib/server/ibkr-client");
+    const ibkrAvailable = await isIbkrAvailable();
+    if (!ibkrAvailable) {
       const { warmPreEarningsScan } = await import("@/lib/server/pre-earnings-scan-service");
       warmPreEarningsScan();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown instrumentation error";
-      console.warn(`[instrumentation] failed to start pre-earnings warmup: ${message}`);
     }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown instrumentation error";
+    console.warn(`[instrumentation] failed to start pre-earnings warmup: ${message}`);
   }
 }

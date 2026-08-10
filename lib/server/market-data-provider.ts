@@ -535,13 +535,5 @@ export function getOptionDataProvider(): {
   getOptionChainCalls: (symbol: string, expiry: number) => Promise<OptionContract[]>;
   getOptionChainPuts: (symbol: string, expiry: number) => Promise<OptionContract[]>;
 } {
-  const ibkrEnabled = process.env.IBKR_DISABLED !== "true";
-  if (ibkrEnabled) {
-    return ibkrMarketDataProvider;
-  }
-  return {
-    getOptionSnapshot: (s) => marketDataProvider.getOptionSnapshot(s),
-    getOptionChainCalls: (s, e) => marketDataProvider.getOptionChainCalls(s, e),
-    getOptionChainPuts: (s, e) => marketDataProvider.getOptionChainPuts(s, e),
-  };
+  return ibkrMarketDataProvider;
 }

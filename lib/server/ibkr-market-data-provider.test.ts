@@ -149,36 +149,7 @@ describe("filterStrikesInRange", () => {
 });
 
 describe("getOptionDataProvider provider selection", () => {
-  const originalEnv = process.env.IBKR_DISABLED;
-
-  afterEach(() => {
-    if (originalEnv === undefined) {
-      delete process.env.IBKR_DISABLED;
-    } else {
-      process.env.IBKR_DISABLED = originalEnv;
-    }
-    vi.resetModules();
-  });
-
-  it("returns the IBKR provider when IBKR_DISABLED is unset (default enabled)", async () => {
-    delete process.env.IBKR_DISABLED;
-    const { getOptionDataProvider } = await import("./market-data-provider");
-    const { ibkrMarketDataProvider } = await import("./ibkr-market-data-provider");
-    const provider = getOptionDataProvider();
-    expect(provider).toBe(ibkrMarketDataProvider);
-  });
-
-  it("returns the Cboe provider when IBKR_DISABLED=true", async () => {
-    process.env.IBKR_DISABLED = "true";
-    const { getOptionDataProvider, marketDataProvider } = await import("./market-data-provider");
-    const provider = getOptionDataProvider();
-    // Not the IBKR provider — wraps marketDataProvider methods
-    expect(provider).not.toBe(marketDataProvider);
-    expect(typeof provider.getOptionSnapshot).toBe("function");
-  });
-
-  it("returns the IBKR provider when IBKR_DISABLED=false", async () => {
-    process.env.IBKR_DISABLED = "false";
+  it("always returns the IBKR provider (runtime detection via isIbkrAvailable)", async () => {
     const { getOptionDataProvider } = await import("./market-data-provider");
     const { ibkrMarketDataProvider } = await import("./ibkr-market-data-provider");
     const provider = getOptionDataProvider();
