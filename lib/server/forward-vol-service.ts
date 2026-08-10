@@ -23,6 +23,7 @@ import {
   marketDataProvider,
   resolveOptionDataProvider,
   isOptionSnapshotStale,
+  type OptionDataProvider,
   type OptionContract,
 } from "@/lib/server/market-data-provider";
 import type { ForwardVolRow, TargetPair } from "@/lib/types";
@@ -205,11 +206,12 @@ export async function computeForwardVolRowsForSymbol(
   targetPairs: TargetPair[] | undefined,
   earningsInfo: EarningsInfo | null | Promise<EarningsInfo | null> = null,
   now: Date = new Date(),
+  optionProvider?: OptionDataProvider,
 ): Promise<ForwardVolRow[]> {
   const targets = normalizeTargets(targetPairs);
-  const optionProvider = await resolveOptionDataProvider();
+  const provider = optionProvider ?? await resolveOptionDataProvider();
   const [snapshot, resolvedEarningsInfo] = await Promise.all([
-    optionProvider.getOptionSnapshot(symbol),
+    provider.getOptionSnapshot(symbol),
     earningsInfo,
   ]);
 
@@ -262,8 +264,8 @@ export async function computeForwardVolRowsForSymbol(
       }
 
       const [shortCalls, longCalls] = await Promise.all([
-        optionProvider.getOptionChainCalls(symbol, chosen.short.expiryUnix),
-        optionProvider.getOptionChainCalls(symbol, chosen.long.expiryUnix),
+        provider.getOptionChainCalls(symbol, chosen.short.expiryUnix),
+        provider.getOptionChainCalls(symbol, chosen.long.expiryUnix),
       ]);
 
       const sharedAtm = selectFlexibleAtmCalls(shortCalls, longCalls, snapshot.spotPrice);
@@ -341,7 +343,7 @@ export async function computeForwardVolRowsForSymbol(
             : null;
         const anchorCalls =
           anchorExpiryUnix !== null
-            ? await optionProvider.getOptionChainCalls(symbol, anchorExpiryUnix)
+            ? await provider.getOptionChainCalls(symbol, anchorExpiryUnix)
             : [];
         const anchorContract =
           anchorExpiryUnix !== null ? findContractByStrike(anchorCalls, sharedAtm.strike) : null;

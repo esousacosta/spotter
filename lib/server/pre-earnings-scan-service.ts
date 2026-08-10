@@ -6,7 +6,12 @@ import { getMarketDateIso } from "@/lib/market-time";
 import { comparePreEarningsRows, compareRejectedPreEarningsRows } from "@/lib/pre-earnings-ranking";
 import { getCacheDirectoryPath } from "@/lib/server/cache";
 import { getNextEarningsForSymbols } from "@/lib/server/earnings-provider";
-import { marketDataProvider, resolveOptionDataProvider, type OptionDataProvider } from "@/lib/server/market-data-provider";
+import {
+  marketDataProvider,
+  resolveOptionDataSource,
+  type OptionDataProvider,
+  type OptionDataSource,
+} from "@/lib/server/market-data-provider";
 import { computePreEarningsRow } from "@/lib/server/pre-earnings-service";
 import type {
   PreEarningsRejectedRow,
@@ -32,6 +37,7 @@ const SCAN_STATE_FILE = "pre-earnings-scan-result.json";
 type ScanStatus = "running" | "complete" | "failed";
 
 type ScanState = {
+  quoteSource: OptionDataSource;
   asOf: string;
   scanLimit: number;
   scannedSymbols: number;
@@ -171,6 +177,7 @@ function getScanStateFilePath(): string {
 
 async function persistCompletedScanState(state: ScanState): Promise<void> {
   const persisted: PersistedScanState = {
+    quoteSource: state.quoteSource,
     asOf: state.asOf,
     scanLimit: state.scanLimit,
     scannedSymbols: state.scannedSymbols,
@@ -186,13 +193,17 @@ async function persistCompletedScanState(state: ScanState): Promise<void> {
   await fs.promises.writeFile(filePath, JSON.stringify(persisted), "utf8");
 }
 
-function loadScanStateFromDisk(scanLimit: number | null): ScanState | null {
+function loadScanStateFromDisk(
+  scanLimit: number | null,
+  quoteSource?: OptionDataSource,
+): ScanState | null {
   const filePath = getScanStateFilePath();
   try {
     const raw = fs.readFileSync(filePath, "utf8");
     const parsed = JSON.parse(raw) as Partial<PersistedScanState>;
     if (
       typeof parsed.asOf !== "string" ||
+      (parsed.quoteSource !== "ibkr" && parsed.quoteSource !== "cboe") ||
       typeof parsed.scanLimit !== "number" ||
       typeof parsed.scannedSymbols !== "number" ||
       typeof parsed.evaluatedSymbols !== "number" ||
@@ -205,11 +216,16 @@ function loadScanStateFromDisk(scanLimit: number | null): ScanState | null {
       return null;
     }
 
-    if ((scanLimit !== null && parsed.scanLimit !== scanLimit) || parsed.status !== "complete") {
+    if (
+      (scanLimit !== null && parsed.scanLimit !== scanLimit) ||
+      (quoteSource !== undefined && parsed.quoteSource !== quoteSource) ||
+      parsed.status !== "complete"
+    ) {
       return null;
     }
 
     const state: ScanState = {
+      quoteSource: parsed.quoteSource,
       asOf: parsed.asOf,
       scanLimit: parsed.scanLimit,
       scannedSymbols: parsed.scannedSymbols,
@@ -352,20 +368,35 @@ async function processScan(
 }
 
 
-async function startScan(scanLimit: number): Promise<ScanState> {
+async function startScan(
+  scanLimit: number,
+  quoteSource: OptionDataSource,
+  optionProvider: OptionDataProvider,
+): Promise<ScanState> {
   const existing = scanStates.get(scanLimit);
-  if (existing) {
-    const hasLegacyError = hasLegacyMapShapeError(existing);
-    const freshComplete = existing.status === "complete" && existing.expiresAtMs > Date.now();
-    if ((freshComplete && !hasLegacyError) || existing.status === "running") {
-      return existing;
+  if (existing && existing.quoteSource !== quoteSource) {
+    scanGeneration += 1;
+    scanStates.delete(scanLimit);
+    staleScanStates.delete(scanLimit);
+  }
+  const staleStateForSource = staleScanStates.get(scanLimit);
+  if (staleStateForSource && staleStateForSource.quoteSource !== quoteSource) {
+    staleScanStates.delete(scanLimit);
+  }
+  const matchingExisting = scanStates.get(scanLimit);
+  if (matchingExisting) {
+    const hasLegacyError = hasLegacyMapShapeError(matchingExisting);
+    const freshComplete =
+      matchingExisting.status === "complete" && matchingExisting.expiresAtMs > Date.now();
+    if ((freshComplete && !hasLegacyError) || matchingExisting.status === "running") {
+      return matchingExisting;
     }
-    if (existing.status === "complete" && !hasLegacyError) {
-      staleScanStates.set(scanLimit, existing);
+    if (matchingExisting.status === "complete" && !hasLegacyError) {
+      staleScanStates.set(scanLimit, matchingExisting);
     }
   }
 
-  const diskState = loadScanStateFromDisk(scanLimit);
+  const diskState = loadScanStateFromDisk(scanLimit, quoteSource);
   if (diskState) {
     if (diskState.expiresAtMs > Date.now()) {
       scanStates.set(scanLimit, diskState);
@@ -377,6 +408,7 @@ async function startScan(scanLimit: number): Promise<ScanState> {
 
   const staleState = staleScanStates.get(scanLimit);
   const state: ScanState = {
+    quoteSource,
     asOf: new Date().toISOString(),
     scanLimit,
     scannedSymbols: staleState?.scannedSymbols ?? scanLimit,
@@ -395,12 +427,11 @@ async function startScan(scanLimit: number): Promise<ScanState> {
     const tickers = allTickers.slice(0, scanLimit);
     state.scannedSymbols = tickers.length;
 
-    const { isIbkrAvailable } = await import("@/lib/server/ibkr-client");
-    const ibkrAvailable = await isIbkrAvailable();
-    const optionProvider = await resolveOptionDataProvider();
-    const scanConcurrency = ibkrAvailable ? IBKR_SCAN_CONCURRENCY : CBOE_SCAN_CONCURRENCY;
-    const interBatchPauseMs = ibkrAvailable ? IBKR_INTER_BATCH_PAUSE_MS : CBOE_INTER_BATCH_PAUSE_MS;
-    console.info(`[pre-earnings] scan starting with ${ibkrAvailable ? "IBKR live" : "Cboe delayed"} quotes (concurrency=${scanConcurrency}).`);
+    const scanConcurrency =
+      quoteSource === "ibkr" ? IBKR_SCAN_CONCURRENCY : CBOE_SCAN_CONCURRENCY;
+    const interBatchPauseMs =
+      quoteSource === "ibkr" ? IBKR_INTER_BATCH_PAUSE_MS : CBOE_INTER_BATCH_PAUSE_MS;
+    console.info(`[pre-earnings] scan starting with ${quoteSource === "ibkr" ? "IBKR live" : "Cboe delayed"} quotes (concurrency=${scanConcurrency}).`);
 
     await processScan(state, tickers, generation, optionProvider, scanConcurrency, interBatchPauseMs);
   })()
@@ -463,7 +494,8 @@ export async function getPreEarningsScan(options: {
       scanLimit = allTickers.length;
     }
   }
-  const state = await startScan(scanLimit);
+  const { source, provider } = await resolveOptionDataSource();
+  const state = await startScan(scanLimit, source, provider);
   return snapshotFromState(state, topN, staleScanStates.get(scanLimit) ?? null);
 }
 
@@ -471,7 +503,8 @@ export function warmPreEarningsScan(scanLimit?: number): void {
   void (async () => {
     const allTickers = await marketDataProvider.getSP500Tickers();
     const finalScanLimit = scanLimit ?? allTickers.length;
-    await startScan(finalScanLimit);
+    const { source, provider } = await resolveOptionDataSource();
+    await startScan(finalScanLimit, source, provider);
   })().catch((error) => {
     const message = error instanceof Error ? error.message : "unknown warmup error";
     console.warn(`[pre-earnings] warmup failed: ${message}`);

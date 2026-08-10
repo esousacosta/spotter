@@ -682,9 +682,13 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
   const [cacheError, setCacheError] = useState<string | null>(null);
   const preRefreshInFlight = useRef(false);
   const topRefreshInFlight = useRef(false);
+  const preScanLoaded = useRef(false);
+  const topScanLoaded = useRef(false);
 
   type IbkrStatusPayload = { enabled: boolean; authenticated: boolean; gatewayUrl: string; error?: string };
   const [ibkrStatus, setIbkrStatus] = useState<IbkrStatusPayload | "loading" | null>("loading");
+  const [quoteSourceVersion, setQuoteSourceVersion] = useState(0);
+  const lastIbkrAuthenticated = useRef<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -746,10 +750,42 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
   }, [user]);
 
   useEffect(() => {
-    fetch("/api/ibkr-status")
-      .then((res) => res.json() as Promise<IbkrStatusPayload>)
-      .then((payload) => setIbkrStatus(payload))
-      .catch(() => setIbkrStatus(null));
+    let cancelled = false;
+
+    async function refreshIbkrStatus(): Promise<void> {
+      try {
+        const response = await fetch("/api/ibkr-status", { cache: "no-store" });
+        const payload = (await response.json()) as IbkrStatusPayload;
+        if (cancelled) return;
+
+        const becameLive =
+          payload.authenticated && lastIbkrAuthenticated.current === false;
+        lastIbkrAuthenticated.current = payload.authenticated;
+        setIbkrStatus(payload);
+
+        if (becameLive) {
+          await Promise.all([
+            fetchWithTimeout("/api/cache", { method: "DELETE" }, UI_REQUEST_TIMEOUT_MS),
+            fetchWithTimeout("/api/top-forward-vol", { method: "DELETE" }, UI_REQUEST_TIMEOUT_MS),
+          ]);
+          if (!cancelled) {
+            setQuoteSourceVersion((version) => version + 1);
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          lastIbkrAuthenticated.current = false;
+          setIbkrStatus(null);
+        }
+      }
+    }
+
+    void refreshIbkrStatus();
+    const interval = window.setInterval(() => void refreshIbkrStatus(), 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -860,7 +896,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
       }
       controller.abort();
     };
-  }, [symbol]);
+  }, [quoteSourceVersion, symbol]);
 
   useEffect(() => {
     if (!watchlistReady || activeTab !== "forward" || watchlist.length === 0) {
@@ -909,7 +945,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
       });
 
     return () => controller.abort();
-  }, [activeTab, tickers, watchlist, watchlistReady]);
+  }, [activeTab, quoteSourceVersion, tickers, watchlist, watchlistReady]);
 
   useEffect(() => {
     if (!watchlistReady || activeTab !== "preearnings" || watchlist.length === 0) {
@@ -941,7 +977,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
       });
 
     return () => controller.abort();
-  }, [activeTab, watchlist, watchlistReady]);
+  }, [activeTab, quoteSourceVersion, watchlist, watchlistReady]);
 
   useEffect(() => {
     if (activeTab !== "forward" || !topScanMeta?.isWarming) {
@@ -1174,6 +1210,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
   }
 
   async function loadTopRows(silent = false) {
+    topScanLoaded.current = true;
     if (!silent) {
       setTopRowsLoading(true);
       setTopError(null);
@@ -1221,6 +1258,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
   }
 
   async function loadPreEarningsRows(silent = false) {
+    preScanLoaded.current = true;
     if (!silent) {
       setPreRowsLoading(true);
       setPreError(null);
@@ -1299,6 +1337,18 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
       setUpcomingRowsLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (quoteSourceVersion === 0) {
+      return;
+    }
+    if (topScanLoaded.current) {
+      void loadTopRows(true);
+    }
+    if (preScanLoaded.current) {
+      void loadPreEarningsRows(true);
+    }
+  }, [quoteSourceVersion]);
 
   async function clearServerCaches() {
     setCacheClearing(true);
