@@ -8,7 +8,12 @@ import {
 } from "@/lib/server/forward-vol-service";
 import { buildRankingReason } from "@/lib/server/ranking-reason";
 import { getNextEarningsForSymbols } from "@/lib/server/earnings-provider";
-import { marketDataProvider } from "@/lib/server/market-data-provider";
+import {
+  marketDataProvider,
+  resolveOptionDataSource,
+  type OptionDataProvider,
+  type OptionDataSource,
+} from "@/lib/server/market-data-provider";
 import type { RankedForwardVolRow, TopForwardVolResponse, ScanStats } from "@/lib/types";
 
 const requestSchema = z.object({
@@ -20,6 +25,7 @@ const CBOE_SCAN_CONCURRENCY = 1;
 const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type TopScanState = {
+  quoteSource: OptionDataSource;
   asOf: string;
   scannedSymbols: number;
   processedSymbols: number;
@@ -79,7 +85,11 @@ async function runWithConcurrency<T>(
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
 }
 
-async function runTopScan(state: TopScanState, generation: number): Promise<void> {
+async function runTopScan(
+  state: TopScanState,
+  generation: number,
+  optionProvider: OptionDataProvider,
+): Promise<void> {
   const tickers = await marketDataProvider.getSP500Tickers();
   const targets = normalizeTargets(undefined);
   const earningsMap = await getNextEarningsForSymbols(
@@ -89,8 +99,7 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
 
   state.scannedSymbols = tickers.length;
 
-  const { isIbkrAvailable } = await import("@/lib/server/ibkr-client");
-  const ibkrAvailable = await isIbkrAvailable();
+  const ibkrAvailable = state.quoteSource === "ibkr";
   const scanConcurrency = ibkrAvailable ? IBKR_SCAN_CONCURRENCY : CBOE_SCAN_CONCURRENCY;
   console.info(`[top-forward-vol] scan starting with ${ibkrAvailable ? "IBKR live" : "Cboe delayed"} quotes (concurrency=${scanConcurrency}).`);
 
@@ -114,6 +123,8 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
         ticker.symbol,
         targets,
         earningsMap.get(ticker.symbol) ?? null,
+        new Date(state.asOf),
+        optionProvider,
       );
 
       for (const row of symbolRows) {
@@ -155,6 +166,13 @@ async function runTopScan(state: TopScanState, generation: number): Promise<void
 }
 
 async function ensureTopScan(): Promise<TopScanState> {
+  const { source, provider } = await resolveOptionDataSource();
+  if (topScanState && topScanState.quoteSource !== source) {
+    topScanGeneration += 1;
+    topScanState = null;
+    staleTopScanState = null;
+  }
+
   if (topScanState) {
     const freshComplete = topScanState.status === "complete" && topScanState.expiresAtMs > Date.now();
     if (freshComplete || topScanState.status === "running") {
@@ -166,6 +184,7 @@ async function ensureTopScan(): Promise<TopScanState> {
   }
 
   const state: TopScanState = {
+    quoteSource: source,
     asOf: new Date().toISOString(),
     scannedSymbols: 0,
     processedSymbols: 0,
@@ -179,7 +198,7 @@ async function ensureTopScan(): Promise<TopScanState> {
   topScanState = state;
   const generation = topScanGeneration;
 
-  const runPromise = runTopScan(state, generation)
+  const runPromise = runTopScan(state, generation, provider)
     .then(() => {
       if (generation !== topScanGeneration) return;
       state.status = "complete";

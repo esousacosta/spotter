@@ -536,8 +536,17 @@ export type OptionDataProvider = {
   getOptionChainPuts: (symbol: string, expiry: number) => Promise<OptionContract[]>;
 };
 
+export type OptionDataSource = "ibkr" | "cboe";
+
 const IBKR_AVAILABILITY_TTL_MS = 30_000;
 let ibkrAvailabilityCache: { value: boolean; expiresAtMs: number } | null = null;
+
+export function recordIbkrAvailability(available: boolean): void {
+  ibkrAvailabilityCache = {
+    value: available,
+    expiresAtMs: Date.now() + IBKR_AVAILABILITY_TTL_MS,
+  };
+}
 
 async function checkIbkrAvailable(): Promise<boolean> {
   const now = Date.now();
@@ -546,7 +555,7 @@ async function checkIbkrAvailable(): Promise<boolean> {
   }
   const { isIbkrAvailable } = await import("@/lib/server/ibkr-client");
   const available = await isIbkrAvailable();
-  ibkrAvailabilityCache = { value: available, expiresAtMs: now + IBKR_AVAILABILITY_TTL_MS };
+  recordIbkrAvailability(available);
   return available;
 }
 
@@ -556,7 +565,16 @@ const cboeOptionProvider: OptionDataProvider = {
   getOptionChainPuts: (s, e) => marketDataProvider.getOptionChainPuts(s, e),
 };
 
-export async function resolveOptionDataProvider(): Promise<OptionDataProvider> {
+export async function resolveOptionDataSource(): Promise<{
+  source: OptionDataSource;
+  provider: OptionDataProvider;
+}> {
   const available = await checkIbkrAvailable();
-  return available ? ibkrMarketDataProvider : cboeOptionProvider;
+  return available
+    ? { source: "ibkr", provider: ibkrMarketDataProvider }
+    : { source: "cboe", provider: cboeOptionProvider };
+}
+
+export async function resolveOptionDataProvider(): Promise<OptionDataProvider> {
+  return (await resolveOptionDataSource()).provider;
 }
