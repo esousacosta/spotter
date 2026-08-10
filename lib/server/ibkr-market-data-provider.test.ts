@@ -148,12 +148,29 @@ describe("filterStrikesInRange", () => {
   });
 });
 
-describe("getOptionDataProvider provider selection", () => {
-  it("always returns the IBKR provider (runtime detection via isIbkrAvailable)", async () => {
-    const { getOptionDataProvider } = await import("./market-data-provider");
+describe("resolveOptionDataProvider provider selection", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it("returns the IBKR provider when IBKR is available", async () => {
+    const ibkrClient = await import("./ibkr-client");
+    vi.spyOn(ibkrClient, "isIbkrAvailable").mockResolvedValueOnce(true);
+    const { resolveOptionDataProvider } = await import("./market-data-provider");
     const { ibkrMarketDataProvider } = await import("./ibkr-market-data-provider");
-    const provider = getOptionDataProvider();
+    const provider = await resolveOptionDataProvider();
     expect(provider).toBe(ibkrMarketDataProvider);
+  });
+
+  it("returns the Cboe provider when IBKR is unavailable", async () => {
+    const ibkrClient = await import("./ibkr-client");
+    vi.spyOn(ibkrClient, "isIbkrAvailable").mockResolvedValueOnce(false);
+    const { resolveOptionDataProvider } = await import("./market-data-provider");
+    const { ibkrMarketDataProvider } = await import("./ibkr-market-data-provider");
+    const provider = await resolveOptionDataProvider();
+    expect(provider).not.toBe(ibkrMarketDataProvider);
+    expect(typeof provider.getOptionSnapshot).toBe("function");
   });
 });
 

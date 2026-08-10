@@ -21,7 +21,7 @@ import { getMarketDateIso } from "@/lib/market-time";
 import type { EarningsInfo } from "@/lib/server/earnings-provider";
 import {
   marketDataProvider,
-  getOptionDataProvider,
+  resolveOptionDataProvider,
   isOptionSnapshotStale,
   type OptionContract,
 } from "@/lib/server/market-data-provider";
@@ -207,7 +207,7 @@ export async function computeForwardVolRowsForSymbol(
   now: Date = new Date(),
 ): Promise<ForwardVolRow[]> {
   const targets = normalizeTargets(targetPairs);
-  const optionProvider = getOptionDataProvider();
+  const optionProvider = await resolveOptionDataProvider();
   const [snapshot, resolvedEarningsInfo] = await Promise.all([
     optionProvider.getOptionSnapshot(symbol),
     earningsInfo,
