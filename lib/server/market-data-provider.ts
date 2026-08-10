@@ -535,7 +535,7 @@ export function getOptionDataProvider(): {
   getOptionChainCalls: (symbol: string, expiry: number) => Promise<OptionContract[]>;
   getOptionChainPuts: (symbol: string, expiry: number) => Promise<OptionContract[]>;
 } {
-  const ibkrEnabled = process.env.IBKR_DISABLED !== "true";
+  const ibkrEnabled = process.env.IBKR_ENABLED === "true";
   if (ibkrEnabled) {
     return ibkrMarketDataProvider;
   }
