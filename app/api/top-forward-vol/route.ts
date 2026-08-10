@@ -15,7 +15,7 @@ const requestSchema = z.object({
   topN: z.number().int().positive().optional(),
 });
 
-const isLiveMode = process.env.IBKR_ENABLED === 'true';
+const isLiveMode = process.env.IBKR_DISABLED !== 'true';
 // Cboe pacing requires strict sequential processing.
 // IBKR requests are globally paced below the gateway's 10 req/s limit, so a
 // larger worker pool can overlap contract processing without creating bursts.

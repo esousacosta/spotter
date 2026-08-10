@@ -15,7 +15,7 @@ import type {
   Ticker,
 } from "@/lib/types";
 
-const isLiveMode = process.env.IBKR_ENABLED === 'true';
+const isLiveMode = process.env.IBKR_DISABLED !== 'true';
 // Cboe requires strict sequential processing with inter-batch pauses to avoid 429s.
 // IBKR requests are globally paced below the gateway's 10 req/s limit, so a
 // larger worker pool can overlap contract processing without creating bursts.
