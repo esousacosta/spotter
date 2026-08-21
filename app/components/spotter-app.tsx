@@ -12,6 +12,7 @@ import {
 } from "@/lib/forward-trade-drilldown";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { buildMarketScanHtml, marketScanHtmlFilename } from "@/lib/market-scan-html";
+import { ManualEdgeCalculator } from "@/app/components/manual-edge-calculator";
 import { sortRows, toggleSort, type SortConfig } from "@/lib/table-sort";
 import { loadWatchlist, saveWatchlist } from "@/lib/watchlist";
 import type {
@@ -1527,6 +1528,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
       <div className="workspace">
         {activeTab === "forward" ? (
           <>
+            <ManualEdgeCalculator />
             {watchlist.length > 0 ? (
               <section className="panel watchlist-panel">
                 <div className="watchlist-header">
