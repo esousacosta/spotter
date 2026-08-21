@@ -8,13 +8,23 @@ interface CreateTradeFormProps {
   onCancel: () => void;
 }
 
-// Numeric inputs report an empty string while being cleared/edited; parsing
-// that yields NaN, which React logs a warning for on a controlled `value`.
-// Fall back to 0 so the input always receives a valid number.
-function toNumber(rawValue: string, parser: (value: string) => number) {
+// Numeric fields are kept as raw strings while the user is typing so the
+// input can be freely cleared (including deleting a "0") without React
+// snapping a coerced number back into the field on every keystroke. They are
+// only parsed into numbers, falling back to 0, when the form is submitted.
+function parseNumberField(rawValue: string, parser: (value: string) => number) {
   const parsed = parser(rawValue);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
+
+const emptyLeg = {
+  side: 'buy' as const,
+  optionType: 'call' as const,
+  quantity: '1',
+  strike: '0',
+  expirationDate: '',
+  entryPrice: '0',
+};
 
 export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
   const [loading, setLoading] = useState(false);
@@ -23,29 +33,20 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
   const [formData, setFormData] = useState({
     symbol: '',
     strategy: '',
-    quantity: 1,
-    contractMultiplier: 100,
-    entryNetDebit: 0,
-    entryCommissions: 0,
-    edgeAtEntry: 0,
+    quantity: '1',
+    contractMultiplier: '100',
+    entryNetDebit: '0',
+    entryCommissions: '0',
+    edgeAtEntry: '0',
     notes: '',
-    legs: [
-      {
-        side: 'buy' as const,
-        optionType: 'call' as const,
-        quantity: 1,
-        strike: 0,
-        expirationDate: '',
-        entryPrice: 0,
-      },
-    ],
+    legs: [{ ...emptyLeg }],
   });
 
-  const handleInputChange = (field: string, value: any) => {
+  const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleLegChange = (legIndex: number, field: string, value: any) => {
+  const handleLegChange = (legIndex: number, field: string, value: string) => {
     setFormData(prev => ({
       ...prev,
       legs: prev.legs.map((leg, idx) =>
@@ -57,17 +58,7 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
   const addLeg = () => {
     setFormData(prev => ({
       ...prev,
-      legs: [
-        ...prev.legs,
-        {
-          side: 'buy' as const,
-          optionType: 'call' as const,
-          quantity: 1,
-          strike: 0,
-          expirationDate: '',
-          entryPrice: 0,
-        },
-      ],
+      legs: [...prev.legs, { ...emptyLeg }],
     }));
   };
 
@@ -90,7 +81,22 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...formData,
+          symbol: formData.symbol,
+          strategy: formData.strategy,
+          notes: formData.notes,
+          quantity: parseNumberField(formData.quantity, parseInt),
+          contractMultiplier: parseNumberField(formData.contractMultiplier, parseInt),
+          entryNetDebit: parseNumberField(formData.entryNetDebit, parseFloat),
+          entryCommissions: parseNumberField(formData.entryCommissions, parseFloat),
+          edgeAtEntry: parseNumberField(formData.edgeAtEntry, parseFloat),
+          legs: formData.legs.map(leg => ({
+            side: leg.side,
+            optionType: leg.optionType,
+            expirationDate: leg.expirationDate,
+            quantity: parseNumberField(leg.quantity, parseInt),
+            strike: parseNumberField(leg.strike, parseFloat),
+            entryPrice: parseNumberField(leg.entryPrice, parseFloat),
+          })),
           openedAt: new Date().toISOString(),
         }),
       });
@@ -142,7 +148,7 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
             type="number"
             required
             value={formData.quantity}
-            onChange={e => handleInputChange('quantity', toNumber(e.target.value, parseInt))}
+            onChange={e => handleInputChange('quantity', e.target.value)}
           />
         </div>
 
@@ -153,7 +159,7 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
             step="0.01"
             required
             value={formData.entryNetDebit}
-            onChange={e => handleInputChange('entryNetDebit', toNumber(e.target.value, parseFloat))}
+            onChange={e => handleInputChange('entryNetDebit', e.target.value)}
           />
         </div>
 
@@ -163,7 +169,7 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
             type="number"
             step="0.01"
             value={formData.entryCommissions}
-            onChange={e => handleInputChange('entryCommissions', toNumber(e.target.value, parseFloat))}
+            onChange={e => handleInputChange('entryCommissions', e.target.value)}
           />
         </div>
 
@@ -173,7 +179,7 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
             type="number"
             step="0.01"
             value={formData.edgeAtEntry}
-            onChange={e => handleInputChange('edgeAtEntry', toNumber(e.target.value, parseFloat))}
+            onChange={e => handleInputChange('edgeAtEntry', e.target.value)}
           />
         </div>
       </div>
@@ -234,7 +240,7 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
                   type="number"
                   step="0.01"
                   value={leg.strike}
-                  onChange={e => handleLegChange(idx, 'strike', toNumber(e.target.value, parseFloat))}
+                  onChange={e => handleLegChange(idx, 'strike', e.target.value)}
                 />
               </div>
 
@@ -243,7 +249,7 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
                 <input
                   type="number"
                   value={leg.quantity}
-                  onChange={e => handleLegChange(idx, 'quantity', toNumber(e.target.value, parseInt))}
+                  onChange={e => handleLegChange(idx, 'quantity', e.target.value)}
                 />
               </div>
 
@@ -264,7 +270,7 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
                   step="0.01"
                   required
                   value={leg.entryPrice}
-                  onChange={e => handleLegChange(idx, 'entryPrice', toNumber(e.target.value, parseFloat))}
+                  onChange={e => handleLegChange(idx, 'entryPrice', e.target.value)}
                 />
               </div>
             </div>

@@ -9,7 +9,11 @@ interface CloseTradeFormProps {
   onCancel: () => void;
 }
 
-function toNumber(rawValue: string) {
+// Numeric fields are kept as raw strings while the user is typing so the
+// input can be freely cleared without React snapping a coerced number back
+// into the field on every keystroke. They are only parsed into numbers,
+// falling back to 0, when the form is submitted.
+function parseNumberField(rawValue: string) {
   const parsed = parseFloat(rawValue);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
@@ -17,10 +21,10 @@ function toNumber(rawValue: string) {
 export function CloseTradeForm({ trade, onSuccess, onCancel }: CloseTradeFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [exitNetCredit, setExitNetCredit] = useState(0);
-  const [exitCommissions, setExitCommissions] = useState(0);
-  const [legExitPrices, setLegExitPrices] = useState<Record<string, number>>(
-    Object.fromEntries(trade.legs.map(leg => [leg.id, 0]))
+  const [exitNetCredit, setExitNetCredit] = useState('0');
+  const [exitCommissions, setExitCommissions] = useState('0');
+  const [legExitPrices, setLegExitPrices] = useState<Record<string, string>>(
+    Object.fromEntries(trade.legs.map(leg => [leg.id, '0']))
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -34,11 +38,11 @@ export function CloseTradeForm({ trade, onSuccess, onCancel }: CloseTradeFormPro
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           closedAt: new Date().toISOString(),
-          exitNetCredit,
-          exitCommissions,
+          exitNetCredit: parseNumberField(exitNetCredit),
+          exitCommissions: parseNumberField(exitCommissions),
           legs: trade.legs.map(leg => ({
             legId: leg.id,
-            exitPrice: legExitPrices[leg.id] ?? 0,
+            exitPrice: parseNumberField(legExitPrices[leg.id] ?? '0'),
           })),
         }),
       });
@@ -69,7 +73,7 @@ export function CloseTradeForm({ trade, onSuccess, onCancel }: CloseTradeFormPro
             step="0.01"
             required
             value={exitNetCredit}
-            onChange={e => setExitNetCredit(toNumber(e.target.value))}
+            onChange={e => setExitNetCredit(e.target.value)}
           />
         </div>
 
@@ -79,7 +83,7 @@ export function CloseTradeForm({ trade, onSuccess, onCancel }: CloseTradeFormPro
             type="number"
             step="0.01"
             value={exitCommissions}
-            onChange={e => setExitCommissions(toNumber(e.target.value))}
+            onChange={e => setExitCommissions(e.target.value)}
           />
         </div>
       </div>
@@ -99,9 +103,9 @@ export function CloseTradeForm({ trade, onSuccess, onCancel }: CloseTradeFormPro
                 type="number"
                 step="0.01"
                 required
-                value={legExitPrices[leg.id] ?? 0}
+                value={legExitPrices[leg.id] ?? '0'}
                 onChange={e =>
-                  setLegExitPrices(prev => ({ ...prev, [leg.id]: toNumber(e.target.value) }))
+                  setLegExitPrices(prev => ({ ...prev, [leg.id]: e.target.value }))
                 }
               />
             </div>
