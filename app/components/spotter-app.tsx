@@ -1418,12 +1418,17 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
         </div>
         <div className="header-actions">
           {user ? (
-            <div className="auth-status">
-              <span>Signed in as {user.email}</span>
-              <button type="button" onClick={() => void signOut({ redirectTo: "/" })}>
-                Log out
-              </button>
-            </div>
+            <>
+              <Link className="button-secondary" href="/trade-journal">
+                Trade Journal
+              </Link>
+              <div className="auth-status">
+                <span>Signed in as {user.email}</span>
+                <button type="button" onClick={() => void signOut({ redirectTo: "/" })}>
+                  Log out
+                </button>
+              </div>
+            </>
           ) : authenticationEnabled ? (
             <Link className="button-secondary auth-link" href="/login">
               Log in
