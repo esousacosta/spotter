@@ -20,7 +20,7 @@ export async function GET(request: Request) {
 
     const url = new URL(request.url);
     const queryParams = {
-      status: url.searchParams.get("status") as any,
+      status: (url.searchParams.get("status") as "open" | "closed" | "cancelled" | null) || undefined,
       symbol: url.searchParams.get("symbol") || undefined,
       startDate: url.searchParams.get("startDate") || undefined,
       endDate: url.searchParams.get("endDate") || undefined,
