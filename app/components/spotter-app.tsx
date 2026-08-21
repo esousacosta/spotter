@@ -2049,7 +2049,13 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                                 setTopForwardSortConfig((current) => toggleSort(current, column))
                               }
                             >
-                              Liquidity
+                              Liquidity{" "}
+                              <span
+                                className="info-icon"
+                                title="Liquidity Score (0–100%): measures how easily you can enter/exit the trade. Combines open interest strength (≥500 is good) and bid-ask spread tightness (≤5% is ideal, >15% is poor). Higher score = more executable. This is a ranking weight, not a hard filter—strong-edge trades rank higher even with mediocre liquidity."
+                              >
+                                ℹ️
+                              </span>
                             </SortableHeader>
                             <SortableHeader
                               column="forwardVol"
@@ -2939,6 +2945,37 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                 <p className="hiw-intuition">
                   All market data is delayed (not real-time). Prices and IV values reflect the latest
                   available delayed snapshot from each provider.
+                </p>
+              </div>
+
+              <div className="hiw-section">
+                <h3>Liquidity-weighted ranking (tab 01)</h3>
+                <p>
+                  Beyond the forward volatility edge, the scanner ranks results by <strong>liquidity</strong> to ensure you can actually
+                  execute the trade efficiently. The "Good liquidity first" toggle weights results toward setups with:
+                </p>
+                <ul className="hiw-list">
+                  <li>
+                    <strong>Strong open interest</strong> on both legs: trades with OI ≥ 500 score higher than those below 100.
+                  </li>
+                  <li>
+                    <strong>Tight bid-ask spreads</strong>: spreads ≤ 5% of mid-price are ideal; spreads &gt; 15% get flagged as poor liquidity.
+                  </li>
+                </ul>
+                <p>
+                  The <strong>Liquidity score</strong> (0–100%) combines both signals: open interest quality and spread width.
+                  Each ranks equally: <code>liquidityScore = 0.5 × OI_score + 0.5 × spread_score</code>.
+                </p>
+                <p>
+                  <em>How it affects ranking:</em> When "Good liquidity first" is active, results are sorted by a{" "}
+                  <strong>composite metric: forwardVolEdge + 0.1 × liquidityScore</strong>. A 10% liquidity advantage can lift a
+                  marginal-edge trade up the list, but a strong edge (e.g., 40%) will always rank above a weak edge (e.g., 25%)
+                  even if liquidity is worse. This keeps high-conviction trades at the top while preferring executable setups within
+                  the same edge tier.
+                </p>
+                <p>
+                  <em>Data used:</em> Open interest is streamed live from the options chain; bid-ask spreads are computed from the
+                  mid-market quote on each leg at the time of the scan.
                 </p>
               </div>
 
