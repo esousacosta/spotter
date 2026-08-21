@@ -3,6 +3,7 @@ import { getMarketDateIso } from "@/lib/market-time";
 import type { ForwardVolRow } from "@/lib/types";
 
 const LOW_OPEN_INTEREST = 100;
+const WIDE_SPREAD_PCT = 0.15; // 15% bid-ask spread = poor liquidity
 const MAX_REASON_LENGTH = 120;
 
 export function buildRankingReason(
@@ -43,7 +44,13 @@ export function buildRankingReason(
   const hasLowOpenInterest = [row.shortOpenInterest, row.longOpenInterest].some(
     (value) => value !== null && value < LOW_OPEN_INTEREST,
   );
-  if (hasLowOpenInterest) {
+  const hasWideSpread = [row.shortBidAskSpreadPct, row.longBidAskSpreadPct].some(
+    (value) => value !== null && value > WIDE_SPREAD_PCT,
+  );
+
+  if (hasWideSpread) {
+    parts.push("wide bid-ask spread");
+  } else if (hasLowOpenInterest) {
     parts.push("limited open interest");
   }
 

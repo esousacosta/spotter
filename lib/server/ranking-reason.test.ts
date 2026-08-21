@@ -19,6 +19,9 @@ function makeRow(overrides: Partial<ForwardVolRow> = {}): ForwardVolRow & { symb
     ivLong: 0.25,
     shortOpenInterest: 500,
     longOpenInterest: 600,
+    shortBidAskSpreadPct: 0.05,
+    longBidAskSpreadPct: 0.06,
+    liquidityScore: 0.8,
     forwardVol: 0.2,
     rawForwardVolEdge: 0.4,
     adjustedForwardVolEdge: 0.38,
@@ -39,19 +42,37 @@ describe("buildRankingReason", () => {
     expect(reason?.length).toBeLessThanOrEqual(120);
   });
 
-  it("calls out imminent earnings and liquidity", () => {
+  it("calls out imminent earnings and low open interest", () => {
     const reason = buildRankingReason(
       makeRow({
         adjustedForwardVolEdge: 0.24,
         nextEarningsDate: "2026-08-08",
         tradeClass: "earnings-exposed",
         shortOpenInterest: 20,
+        shortBidAskSpreadPct: null,
+        longBidAskSpreadPct: null,
+        liquidityScore: null,
       }),
       new Date("2026-07-31T12:00:00Z"),
     );
     expect(reason).toContain("Viable adjusted edge (24%)");
     expect(reason).toContain("earnings in 8 days");
     expect(reason).toContain("limited open interest");
+  });
+
+  it("calls out wide bid-ask spread over low OI when both present", () => {
+    const reason = buildRankingReason(
+      makeRow({
+        adjustedForwardVolEdge: 0.24,
+        shortOpenInterest: 20,
+        shortBidAskSpreadPct: 0.20,
+        longBidAskSpreadPct: 0.18,
+        liquidityScore: 0.1,
+      }),
+      new Date("2026-07-31T12:00:00Z"),
+    );
+    expect(reason).toContain("wide bid-ask spread");
+    expect(reason).not.toContain("limited open interest");
   });
 
   it("returns null for non-viable rows", () => {

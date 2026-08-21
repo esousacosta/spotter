@@ -647,6 +647,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
     viableOnly: true,
     tradeClass: "all",
   });
+  const [liquidityFirst, setLiquidityFirst] = useState(false);
   const [preFilter, setPreFilter] = useState<PreEarningsFilter>("all");
   const [preMeta, setPreMeta] = useState<{
     asOf: string;
@@ -1218,7 +1219,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
       const response = await fetchWithTimeout("/api/top-forward-vol", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ liquidityFirst }),
       }, UI_REQUEST_TIMEOUT_MS);
 
       const payload = (await response.json()) as TopForwardVolResponse | { error: string };
@@ -1911,7 +1912,11 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                   <div className="results-toolbar">
                     <div>
                       <h3>Market scan results</h3>
-                      <p>Sorted by forward volatility edge within each result group.</p>
+                      <p>
+                        {liquidityFirst
+                          ? "Sorted by forward vol edge weighted with liquidity score."
+                          : "Sorted by forward volatility edge within each result group."}
+                      </p>
                     </div>
                     <div className="results-actions">
                       <button
@@ -1932,6 +1937,17 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                           aria-pressed={topForwardFilters.viableOnly}
                         >
                           Viable only
+                        </button>
+                        <button
+                          type="button"
+                          className={liquidityFirst ? "chip chip-active" : "chip"}
+                          onClick={() => {
+                            setLiquidityFirst((prev) => !prev);
+                            void loadTopRows(true);
+                          }}
+                          aria-pressed={liquidityFirst}
+                        >
+                          Good liquidity first
                         </button>
                         <button
                           type="button"
@@ -2027,6 +2043,15 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                               Long <AcronymHint short="OI" title="Open Interest" />
                             </th>
                             <SortableHeader
+                              column="liquidityScore"
+                              config={topForwardSortConfig}
+                              onSort={(column) =>
+                                setTopForwardSortConfig((current) => toggleSort(current, column))
+                              }
+                            >
+                              Liquidity
+                            </SortableHeader>
+                            <SortableHeader
                               column="forwardVol"
                               config={topForwardSortConfig}
                               onSort={(column) =>
@@ -2107,6 +2132,17 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                                   <td>{asPct(row.ivLong)}</td>
                                   <td>{asInteger(row.shortOpenInterest)}</td>
                                   <td>{asInteger(row.longOpenInterest)}</td>
+                                  <td title={
+                                    row.shortBidAskSpreadPct != null && row.longBidAskSpreadPct != null
+                                      ? `Short spread: ${asPct(row.shortBidAskSpreadPct)}, Long spread: ${asPct(row.longBidAskSpreadPct)}`
+                                      : row.shortBidAskSpreadPct != null
+                                        ? `Short spread: ${asPct(row.shortBidAskSpreadPct)}`
+                                        : row.longBidAskSpreadPct != null
+                                          ? `Long spread: ${asPct(row.longBidAskSpreadPct)}`
+                                          : undefined
+                                  }>
+                                    {row.liquidityScore != null ? `${Math.round(row.liquidityScore * 100)}%` : "—"}
+                                  </td>
                                   <td>{asPct(row.forwardVol)}</td>
                                   <td>{asPct(row.rawForwardVolEdge)}</td>
                                   <td>{asPct(row.adjustedForwardVolEdge)}</td>
@@ -2119,7 +2155,7 @@ export function SpotterApp({ authenticationEnabled, user }: SpotterAppProps) {
                                 </tr>
                                 {isExpanded ? (
                                   <tr className="row-drilldown">
-                                    <td colSpan={20}>
+                                    <td colSpan={21}>
                                       <ForwardTradeDetailsPanel
                                         loading={analyticsLoading}
                                         error={analyticsError}

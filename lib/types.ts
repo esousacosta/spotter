@@ -32,6 +32,9 @@ export type ForwardVolRow = {
   ivLong: number | null;
   shortOpenInterest: number | null;
   longOpenInterest: number | null;
+  shortBidAskSpreadPct: number | null;
+  longBidAskSpreadPct: number | null;
+  liquidityScore: number | null;
   forwardVol: number | null;
   rawForwardVolEdge: number | null;
   adjustedForwardVolEdge: number | null;

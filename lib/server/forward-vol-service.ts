@@ -29,6 +29,60 @@ import {
 import type { ForwardVolRow, TargetPair } from "@/lib/types";
 
 const MIN_VIABLE_ADJUSTED_EDGE = 0.2;
+
+// ---------------------------------------------------------------------------
+// Liquidity scoring
+// ---------------------------------------------------------------------------
+
+const GOOD_OI_THRESHOLD = 500;
+const MIN_OI_THRESHOLD = 100;
+const MAX_SPREAD_PCT = 0.25; // 25% bid-ask spread = worst liquidity
+
+/** Compute a bid-ask spread as a fraction of the mid price. Returns null if inputs are missing. */
+export function bidAskSpreadPct(bid: number | null, ask: number | null): number | null {
+  if (bid == null || ask == null || bid <= 0 || ask <= 0 || ask < bid) return null;
+  const mid = (bid + ask) / 2;
+  if (mid <= 0) return null;
+  return (ask - bid) / mid;
+}
+
+/**
+ * Score overall liquidity for a forward vol trade (both legs) on a 0–1 scale.
+ * Higher = better liquidity. Used as a tiebreaker/sort weight in rankings.
+ *
+ * Formula combines:
+ *   - OI score: avg(min(OI_short, OI_long)) normalised against GOOD_OI_THRESHOLD
+ *   - Spread score: 1 − avg(spreadPct / MAX_SPREAD_PCT), clamped to [0,1]
+ *
+ * When a component is unavailable (null), it contributes 0.5 (neutral).
+ */
+export function computeLiquidityScore(
+  shortOI: number | null,
+  longOI: number | null,
+  shortSpreadPct: number | null,
+  longSpreadPct: number | null,
+): number {
+  // OI sub-score
+  const minOI = shortOI !== null && longOI !== null
+    ? Math.min(shortOI, longOI)
+    : (shortOI ?? longOI);
+  const oiScore =
+    minOI === null
+      ? 0.5
+      : Math.min(1, Math.max(0, (minOI - MIN_OI_THRESHOLD) / (GOOD_OI_THRESHOLD - MIN_OI_THRESHOLD)));
+
+  // Spread sub-score (lower spread = better)
+  const availableSpreads = [shortSpreadPct, longSpreadPct].filter((s): s is number => s !== null);
+  const avgSpread = availableSpreads.length > 0
+    ? availableSpreads.reduce((a, b) => a + b, 0) / availableSpreads.length
+    : null;
+  const spreadScore =
+    avgSpread === null
+      ? 0.5
+      : Math.min(1, Math.max(0, 1 - avgSpread / MAX_SPREAD_PCT));
+
+  return (oiScore + spreadScore) / 2;
+}
 const HARD_REJECT_EDGE = 0.0; // Hard reject below this
 const SOFT_CONSIDER_EDGE = 0.05; // "Consider" tier between soft and min viable
 const MAX_CANDIDATE_PAIRS_PER_TARGET = 3;
@@ -443,6 +497,14 @@ export async function computeForwardVolRowsForSymbol(
         ivLong: sharedAtm.long.impliedVolatility,
         shortOpenInterest: sharedAtm.short.openInterest,
         longOpenInterest: sharedAtm.long.openInterest,
+        shortBidAskSpreadPct: bidAskSpreadPct(sharedAtm.short.bid, sharedAtm.short.ask),
+        longBidAskSpreadPct: bidAskSpreadPct(sharedAtm.long.bid, sharedAtm.long.ask),
+        liquidityScore: computeLiquidityScore(
+          sharedAtm.short.openInterest,
+          sharedAtm.long.openInterest,
+          bidAskSpreadPct(sharedAtm.short.bid, sharedAtm.short.ask),
+          bidAskSpreadPct(sharedAtm.long.bid, sharedAtm.long.ask),
+        ),
         forwardVol: adjustedForwardVol,
         rawForwardVolEdge: metrics.forwardVolEdge,
         adjustedForwardVolEdge: adjustedEdge,

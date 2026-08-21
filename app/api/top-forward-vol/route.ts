@@ -18,6 +18,7 @@ import type { RankedForwardVolRow, TopForwardVolResponse, ScanStats } from "@/li
 
 const requestSchema = z.object({
   topN: z.number().int().positive().optional(),
+  liquidityFirst: z.boolean().optional(),
 });
 
 const IBKR_SCAN_CONCURRENCY = 5;
@@ -41,14 +42,40 @@ let topScanState: TopScanState | null = null;
 let staleTopScanState: TopScanState | null = null;
 let topScanGeneration = 0;
 
-function toResponse(state: TopScanState, topN: number | null): TopForwardVolResponse {
+function toResponse(state: TopScanState, topN: number | null, liquidityFirst: boolean): TopForwardVolResponse {
   const visibleState =
     state.status === "running" && staleTopScanState ? staleTopScanState : state;
+
   const sorted = [...visibleState.rows].sort((a, b) => {
     const aEdge = a.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
     const bEdge = b.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
-    return bEdge - aEdge;
+    const edgeDiff = bEdge - aEdge;
+
+    if (!liquidityFirst || edgeDiff !== 0) {
+      return edgeDiff;
+    }
+
+    // When liquidityFirst, use liquidityScore as a tiebreaker — or primary weight
+    // when edges are equal. Sort descending by score.
+    const aScore = a.liquidityScore ?? 0;
+    const bScore = b.liquidityScore ?? 0;
+    if (bScore !== aScore) {
+      return bScore - aScore;
+    }
+    return edgeDiff;
   });
+
+  if (liquidityFirst) {
+    // Re-sort so liquidity blends with edge: composite score = edge + 0.1 * liquidityScore
+    // This means a 10% edge gap can be offset by a perfect vs. zero liquidity score (0.1).
+    sorted.sort((a, b) => {
+      const aEdge = a.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
+      const bEdge = b.forwardVolEdge ?? Number.NEGATIVE_INFINITY;
+      const aComposite = aEdge + 0.1 * (a.liquidityScore ?? 0.5);
+      const bComposite = bEdge + 0.1 * (b.liquidityScore ?? 0.5);
+      return bComposite - aComposite;
+    });
+  }
 
   return {
     asOf: visibleState.asOf,
@@ -225,10 +252,11 @@ export async function POST(request: Request) {
   }
 
   const topN = payload.topN ?? null; // null = no limit
+  const liquidityFirst = payload.liquidityFirst ?? false;
 
   try {
     const state = await ensureTopScan();
-    return NextResponse.json(toResponse(state, topN));
+    return NextResponse.json(toResponse(state, topN, liquidityFirst));
   } catch (error) {
     const message =
       error instanceof Error
