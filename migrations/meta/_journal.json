@@ -15,6 +15,13 @@
       "when": 1787325664512,
       "tag": "0001_wise_korg",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787334401025,
+      "tag": "0002_add_leg_commissions",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,7 @@ const closeTradeSchema = z.object({
     z.object({
       legId: z.string(),
       exitPrice: z.number().nonnegative(),
+      exitCommission: z.number().nonnegative().default(0),
       exitIv: z.number().optional(),
     })
   ).min(1),

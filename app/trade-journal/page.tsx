@@ -275,8 +275,12 @@ export default function TradeJournalPage() {
                             <span>Qty <strong>{leg.quantity}</strong></span>
                             <span>Exp <strong>{leg.expirationDate}</strong></span>
                             <span>Entry <strong>${leg.entryPrice.toFixed(2)}</strong></span>
+                            <span>Commission <strong>${(leg.entryCommission ?? 0).toFixed(2)}</strong></span>
                             {leg.exitPrice != null && (
                               <span>Exit <strong>${leg.exitPrice.toFixed(2)}</strong></span>
+                            )}
+                            {leg.exitCommission != null && (
+                              <span>Exit Commission <strong>${leg.exitCommission.toFixed(2)}</strong></span>
                             )}
                           </div>
                         </div>

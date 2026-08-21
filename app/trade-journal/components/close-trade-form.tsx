@@ -26,6 +26,9 @@ export function CloseTradeForm({ trade, onSuccess, onCancel }: CloseTradeFormPro
   const [legExitPrices, setLegExitPrices] = useState<Record<string, string>>(
     Object.fromEntries(trade.legs.map(leg => [leg.id, '0']))
   );
+  const [legExitCommissions, setLegExitCommissions] = useState<Record<string, string>>(
+    Object.fromEntries(trade.legs.map(leg => [leg.id, '0']))
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +46,7 @@ export function CloseTradeForm({ trade, onSuccess, onCancel }: CloseTradeFormPro
           legs: trade.legs.map(leg => ({
             legId: leg.id,
             exitPrice: parseNumberField(legExitPrices[leg.id] ?? '0'),
+            exitCommission: parseNumberField(legExitCommissions[leg.id] ?? '0'),
           })),
         }),
       });
@@ -106,6 +110,17 @@ export function CloseTradeForm({ trade, onSuccess, onCancel }: CloseTradeFormPro
                 value={legExitPrices[leg.id] ?? '0'}
                 onChange={e =>
                   setLegExitPrices(prev => ({ ...prev, [leg.id]: e.target.value }))
+                }
+              />
+            </div>
+            <div>
+              <label>Exit Commission ($)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={legExitCommissions[leg.id] ?? '0'}
+                onChange={e =>
+                  setLegExitCommissions(prev => ({ ...prev, [leg.id]: e.target.value }))
                 }
               />
             </div>

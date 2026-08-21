@@ -121,13 +121,19 @@ export const tradeJournalLegs = sqliteTable(
     expirationDate: text("expiration_date").notNull(), // date as text (YYYY-MM-DD)
     entryPrice: real("entry_price").notNull(),
     exitPrice: real("exit_price"),
+    entryCommission: real("entry_commission").notNull().default(0),
+    exitCommission: real("exit_commission"),
 
     // Optional diagnostic fields
     entryIv: real("entry_iv"),
     exitIv: real("exit_iv"),
     openInterestAtEntry: integer("open_interest_at_entry"),
   },
-  (table) => [index("trade_journal_legs_trade_id_idx").on(table.tradeId)],
+  (table) => [
+    index("trade_journal_legs_trade_id_idx").on(table.tradeId),
+    check("nonneg_leg_entry_commission", sql`${table.entryCommission} >= 0`),
+    check("nonneg_leg_exit_commission", sql`${table.exitCommission} >= 0`),
+  ],
 );
 
 export const databaseSchema = { users, watchlists, tradeJournalEntries, tradeJournalLegs };

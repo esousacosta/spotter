@@ -28,6 +28,7 @@ const createTradeSchema = z.object({
       strike: z.number().positive(),
       expirationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       entryPrice: z.number().nonnegative(),
+      entryCommission: z.number().nonnegative().default(0),
       entryIv: z.number().optional(),
       openInterestAtEntry: z.number().int().optional(),
     })

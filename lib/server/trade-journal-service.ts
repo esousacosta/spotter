@@ -48,6 +48,7 @@ export interface CreateLegInput {
   strike: number;
   expirationDate: string; // YYYY-MM-DD
   entryPrice: number;
+  entryCommission?: number;
   entryIv?: number;
   openInterestAtEntry?: number;
 }
@@ -62,6 +63,7 @@ export interface CloseTradeInput {
 export interface CloseLegInput {
   legId: string;
   exitPrice: number;
+  exitCommission?: number;
   exitIv?: number;
 }
 
@@ -108,6 +110,8 @@ export interface TradeJournalLeg {
   expirationDate: string;
   entryPrice: number;
   exitPrice?: number;
+  entryCommission: number;
+  exitCommission?: number;
   entryIv?: number;
   exitIv?: number;
   openInterestAtEntry?: number;
@@ -170,6 +174,7 @@ export async function createTrade(input: CreateTradeInput): Promise<TradeWithLeg
         strike: leg.strike,
         expirationDate: leg.expirationDate,
         entryPrice: leg.entryPrice,
+        entryCommission: leg.entryCommission ?? 0,
         entryIv: leg.entryIv,
         openInterestAtEntry: leg.openInterestAtEntry,
       }))
@@ -298,6 +303,7 @@ export async function closeTrade(
       .update(tradeJournalLegs)
       .set({
         exitPrice: legInput.exitPrice,
+        exitCommission: legInput.exitCommission,
         exitIv: legInput.exitIv,
       })
       .where(eq(tradeJournalLegs.id, legInput.legId));
@@ -354,6 +360,7 @@ export interface UpdateLegInput {
   strike: number;
   expirationDate: string;
   entryPrice: number;
+  entryCommission?: number;
   entryIv?: number;
   openInterestAtEntry?: number;
 }
@@ -418,6 +425,7 @@ export async function updateTrade(
             strike: leg.strike,
             expirationDate: leg.expirationDate,
             entryPrice: leg.entryPrice,
+            entryCommission: leg.entryCommission ?? 0,
             entryIv: leg.entryIv,
             openInterestAtEntry: leg.openInterestAtEntry,
           })
@@ -432,6 +440,7 @@ export async function updateTrade(
           strike: leg.strike,
           expirationDate: leg.expirationDate,
           entryPrice: leg.entryPrice,
+          entryCommission: leg.entryCommission ?? 0,
           entryIv: leg.entryIv,
           openInterestAtEntry: leg.openInterestAtEntry,
         });

@@ -34,6 +34,7 @@ const updateLegSchema = z.object({
   strike: z.number(),
   expirationDate: z.string(),
   entryPrice: z.number(),
+  entryCommission: z.number().nonnegative().default(0),
   entryIv: z.number().optional(),
   openInterestAtEntry: z.number().optional(),
 });

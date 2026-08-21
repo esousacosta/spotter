@@ -26,6 +26,7 @@ const emptyLeg = {
   strike: '0',
   expirationDate: '',
   entryPrice: '0',
+  entryCommission: '0',
 };
 
 export function EditTradeForm({ trade, onSuccess, onCancel }: EditTradeFormProps) {
@@ -49,6 +50,7 @@ export function EditTradeForm({ trade, onSuccess, onCancel }: EditTradeFormProps
       strike: String(leg.strike),
       expirationDate: leg.expirationDate,
       entryPrice: String(leg.entryPrice),
+      entryCommission: String(leg.entryCommission ?? 0),
     })),
   });
 
@@ -107,6 +109,7 @@ export function EditTradeForm({ trade, onSuccess, onCancel }: EditTradeFormProps
             quantity: parseNumberField(leg.quantity, parseInt),
             strike: parseNumberField(leg.strike, parseFloat),
             entryPrice: parseNumberField(leg.entryPrice, parseFloat),
+            entryCommission: parseNumberField(leg.entryCommission, parseFloat),
           })),
         }),
       });
@@ -281,6 +284,16 @@ export function EditTradeForm({ trade, onSuccess, onCancel }: EditTradeFormProps
                   required
                   value={leg.entryPrice}
                   onChange={e => handleLegChange(idx, 'entryPrice', e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label>Commission ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={leg.entryCommission}
+                  onChange={e => handleLegChange(idx, 'entryCommission', e.target.value)}
                 />
               </div>
             </div>
