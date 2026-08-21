@@ -345,15 +345,35 @@ export async function closeTrade(
   };
 }
 
+export interface UpdateLegInput {
+  /** Existing leg id to update in place; omit to insert a new leg. */
+  id?: string;
+  side: "buy" | "sell";
+  optionType: "call" | "put";
+  quantity: number;
+  strike: number;
+  expirationDate: string;
+  entryPrice: number;
+  entryIv?: number;
+  openInterestAtEntry?: number;
+}
+
 /**
- * Update mutable fields on an open trade
+ * Update mutable fields (and, optionally, the full leg set) on an open trade
  */
 export async function updateTrade(
   tradeId: string,
   userId: string,
   updates: {
-    notes?: string;
+    symbol?: string;
+    strategy?: string;
+    quantity?: number;
+    contractMultiplier?: number;
+    entryNetDebit?: number;
     entryCommissions?: number;
+    edgeAtEntry?: number;
+    notes?: string;
+    legs?: UpdateLegInput[];
   }
 ): Promise<TradeWithLegs> {
   const trade = await getTradeById(tradeId, userId);
@@ -361,27 +381,72 @@ export async function updateTrade(
     throw new Error("Trade not found");
   }
 
-  if (trade.status === "closed") {
-    throw new Error("Cannot update closed trade");
+  if (trade.status !== "open") {
+    throw new Error(`Cannot update trade with status ${trade.status}`);
   }
+
+  const { legs, ...tradeFieldUpdates } = updates;
 
   const updated = await db
     .update(tradeJournalEntries)
     .set({
-      ...updates,
+      ...tradeFieldUpdates,
       updatedAt: new Date(),
     })
     .where(eq(tradeJournalEntries.id, tradeId))
     .returning();
 
-  const legs = await db
+  if (legs) {
+    const keepIds = new Set(legs.filter((leg) => leg.id).map((leg) => leg.id!));
+
+    // Remove legs that are no longer present in the submitted set.
+    for (const existingLeg of trade.legs) {
+      if (!keepIds.has(existingLeg.id)) {
+        await db.delete(tradeJournalLegs).where(eq(tradeJournalLegs.id, existingLeg.id));
+      }
+    }
+
+    // Update existing legs in place, insert any new ones.
+    for (const leg of legs) {
+      if (leg.id && trade.legs.some((existingLeg) => existingLeg.id === leg.id)) {
+        await db
+          .update(tradeJournalLegs)
+          .set({
+            side: leg.side,
+            optionType: leg.optionType,
+            quantity: leg.quantity,
+            strike: leg.strike,
+            expirationDate: leg.expirationDate,
+            entryPrice: leg.entryPrice,
+            entryIv: leg.entryIv,
+            openInterestAtEntry: leg.openInterestAtEntry,
+          })
+          .where(eq(tradeJournalLegs.id, leg.id));
+      } else {
+        await db.insert(tradeJournalLegs).values({
+          id: randomUUID(),
+          tradeId,
+          side: leg.side,
+          optionType: leg.optionType,
+          quantity: leg.quantity,
+          strike: leg.strike,
+          expirationDate: leg.expirationDate,
+          entryPrice: leg.entryPrice,
+          entryIv: leg.entryIv,
+          openInterestAtEntry: leg.openInterestAtEntry,
+        });
+      }
+    }
+  }
+
+  const finalLegs = await db
     .select()
     .from(tradeJournalLegs)
     .where(eq(tradeJournalLegs.tradeId, tradeId));
 
   return {
     ...updated[0],
-    legs: legs as TradeJournalLeg[],
+    legs: finalLegs as TradeJournalLeg[],
   };
 }
 

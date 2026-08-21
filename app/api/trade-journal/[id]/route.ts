@@ -26,9 +26,28 @@ export async function GET(
   }
 }
 
+const updateLegSchema = z.object({
+  id: z.string().optional(),
+  side: z.enum(["buy", "sell"]),
+  optionType: z.enum(["call", "put"]),
+  quantity: z.number().positive(),
+  strike: z.number(),
+  expirationDate: z.string(),
+  entryPrice: z.number(),
+  entryIv: z.number().optional(),
+  openInterestAtEntry: z.number().optional(),
+});
+
 const updateTradeSchema = z.object({
-  notes: z.string().optional(),
+  symbol: z.string().min(1).optional(),
+  strategy: z.string().min(1).optional(),
+  quantity: z.number().positive().optional(),
+  contractMultiplier: z.number().positive().optional(),
+  entryNetDebit: z.number().optional(),
   entryCommissions: z.number().nonnegative().optional(),
+  edgeAtEntry: z.number().optional(),
+  notes: z.string().optional(),
+  legs: z.array(updateLegSchema).min(1).optional(),
 });
 
 export async function PATCH(

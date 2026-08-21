@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { TradeList } from './components/trade-list';
 import { CreateTradeForm } from './components/create-trade-form';
 import { CloseTradeForm } from './components/close-trade-form';
+import { EditTradeForm } from './components/edit-trade-form';
 import { TradeAnalytics } from './components/trade-analytics';
 import type { TradeWithLegs } from '@/lib/server/trade-journal-service';
 
@@ -16,6 +17,7 @@ export default function TradeJournalPage() {
   const [error, setError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showCloseForm, setShowCloseForm] = useState(false);
+  const [showEditForm, setShowEditForm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const loadTrades = async () => {
@@ -47,6 +49,7 @@ export default function TradeJournalPage() {
   const handleTradeSelected = async (tradeId: string) => {
     setShowCreateForm(false);
     setShowCloseForm(false);
+    setShowEditForm(false);
     try {
       const res = await fetch(`/api/trade-journal/${tradeId}`);
       if (!res.ok) throw new Error('Failed to load trade');
@@ -63,6 +66,12 @@ export default function TradeJournalPage() {
     setShowCloseForm(false);
   };
 
+  const handleTradeUpdated = (tradeId: string, updatedTrade: TradeWithLegs) => {
+    setTrades(trades.map(t => (t.id === tradeId ? updatedTrade : t)));
+    setSelectedTrade(updatedTrade);
+    setShowEditForm(false);
+  };
+
   const handleDeleteTrade = async (tradeId: string) => {
     if (!confirm('Delete this trade? This cannot be undone.')) return;
     setDeleting(true);
@@ -73,6 +82,7 @@ export default function TradeJournalPage() {
       setTrades(trades.filter(t => t.id !== tradeId));
       setSelectedTrade(null);
       setShowCloseForm(false);
+      setShowEditForm(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete trade');
     } finally {
@@ -165,6 +175,7 @@ export default function TradeJournalPage() {
               onClick={() => {
                 setSelectedTrade(null);
                 setShowCloseForm(false);
+                setShowEditForm(false);
                 setShowCreateForm(true);
               }}
               className="button-primary"
@@ -191,11 +202,12 @@ export default function TradeJournalPage() {
             {selectedTrade && (
             <section className="panel">
               <div className="section-header--action">
-                <h2>Trade Details</h2>
+                <h2>{showEditForm ? 'Edit Trade' : 'Trade Details'}</h2>
                 <button
                   onClick={() => {
                     setSelectedTrade(null);
                     setShowCloseForm(false);
+                    setShowEditForm(false);
                   }}
                   className="icon-button"
                   aria-label="Close trade details"
@@ -204,7 +216,13 @@ export default function TradeJournalPage() {
                 </button>
               </div>
 
-              {showCloseForm ? (
+              {showEditForm ? (
+                <EditTradeForm
+                  trade={selectedTrade}
+                  onSuccess={updatedTrade => handleTradeUpdated(selectedTrade.id, updatedTrade)}
+                  onCancel={() => setShowEditForm(false)}
+                />
+              ) : showCloseForm ? (
                 <CloseTradeForm
                   trade={selectedTrade}
                   onSuccess={updatedTrade => handleTradeClosed(selectedTrade.id, updatedTrade)}
@@ -267,9 +285,14 @@ export default function TradeJournalPage() {
 
                   <div className="form-actions">
                     {selectedTrade.status === 'open' && (
-                      <button onClick={() => setShowCloseForm(true)} className="button-primary">
-                        Close Trade
-                      </button>
+                      <>
+                        <button onClick={() => setShowEditForm(true)} className="button-secondary">
+                          Edit Trade
+                        </button>
+                        <button onClick={() => setShowCloseForm(true)} className="button-primary">
+                          Close Trade
+                        </button>
+                      </>
                     )}
                     <button
                       onClick={() => handleDeleteTrade(selectedTrade.id)}
