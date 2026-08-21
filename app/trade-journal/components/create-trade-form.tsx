@@ -8,10 +8,17 @@ interface CreateTradeFormProps {
   onCancel: () => void;
 }
 
+// Numeric inputs report an empty string while being cleared/edited; parsing
+// that yields NaN, which React logs a warning for on a controlled `value`.
+// Fall back to 0 so the input always receives a valid number.
+function toNumber(rawValue: string, parser: (value: string) => number) {
+  const parsed = parser(rawValue);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [legCount, setLegCount] = useState(1);
 
   const [formData, setFormData] = useState({
     symbol: '',
@@ -62,7 +69,6 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
         },
       ],
     }));
-    setLegCount(prev => prev + 1);
   };
 
   const removeLeg = (legIndex: number) => {
@@ -104,119 +110,107 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 text-sm">
-      {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded text-red-800">
-          {error}
-        </div>
-      )}
+    <form onSubmit={handleSubmit} className="trade-form">
+      {error && <p className="error">{error}</p>}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="trade-form-grid">
         <div>
-          <label className="block text-gray-700 font-medium mb-1">Symbol</label>
+          <label>Symbol</label>
           <input
             type="text"
             required
             value={formData.symbol}
             onChange={e => handleInputChange('symbol', e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="AAPL"
           />
         </div>
 
         <div>
-          <label className="block text-gray-700 font-medium mb-1">Strategy</label>
+          <label>Strategy</label>
           <input
             type="text"
             required
             value={formData.strategy}
             onChange={e => handleInputChange('strategy', e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="forward-vol-calendar"
           />
         </div>
 
         <div>
-          <label className="block text-gray-700 font-medium mb-1">Quantity</label>
+          <label>Quantity</label>
           <input
             type="number"
             required
             value={formData.quantity}
-            onChange={e => handleInputChange('quantity', parseInt(e.target.value))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onChange={e => handleInputChange('quantity', toNumber(e.target.value, parseInt))}
           />
         </div>
 
         <div>
-          <label className="block text-gray-700 font-medium mb-1">Entry Debit ($)</label>
+          <label>Entry Debit ($)</label>
           <input
             type="number"
             step="0.01"
             required
             value={formData.entryNetDebit}
-            onChange={e => handleInputChange('entryNetDebit', parseFloat(e.target.value))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onChange={e => handleInputChange('entryNetDebit', toNumber(e.target.value, parseFloat))}
           />
         </div>
 
         <div>
-          <label className="block text-gray-700 font-medium mb-1">Entry Commissions ($)</label>
+          <label>Entry Commissions ($)</label>
           <input
             type="number"
             step="0.01"
             value={formData.entryCommissions}
-            onChange={e => handleInputChange('entryCommissions', parseFloat(e.target.value))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onChange={e => handleInputChange('entryCommissions', toNumber(e.target.value, parseFloat))}
           />
         </div>
 
         <div>
-          <label className="block text-gray-700 font-medium mb-1">Edge (%)</label>
+          <label>Edge (%)</label>
           <input
             type="number"
             step="0.01"
             value={formData.edgeAtEntry}
-            onChange={e => handleInputChange('edgeAtEntry', parseFloat(e.target.value))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onChange={e => handleInputChange('edgeAtEntry', toNumber(e.target.value, parseFloat))}
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-gray-700 font-medium mb-1">Notes</label>
+        <label>Notes</label>
         <textarea
           value={formData.notes}
           onChange={e => handleInputChange('notes', e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 h-16 resize-none"
           placeholder="Add any notes about this trade..."
         />
       </div>
 
       {/* Legs Section */}
-      <div className="border-t pt-4">
-        <h3 className="font-semibold mb-3">Option Legs</h3>
+      <div>
+        <h3>Option Legs</h3>
         {formData.legs.map((leg, idx) => (
-          <div key={idx} className="border rounded-lg p-3 mb-3 bg-gray-50">
-            <div className="flex justify-between items-center mb-3">
-              <span className="font-medium">Leg {idx + 1}</span>
+          <div key={idx} className="leg-card">
+            <div className="leg-card-header">
+              <span>Leg {idx + 1}</span>
               {formData.legs.length > 1 && (
                 <button
                   type="button"
                   onClick={() => removeLeg(idx)}
-                  className="text-red-600 hover:text-red-700 text-sm font-medium"
+                  className="link-button link-button--danger"
                 >
                   Remove
                 </button>
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="leg-fields">
               <div>
-                <label className="text-xs text-gray-600 block mb-1">Side</label>
+                <label>Side</label>
                 <select
                   value={leg.side}
                   onChange={e => handleLegChange(idx, 'side', e.target.value)}
-                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
                 >
                   <option value="buy">Buy</option>
                   <option value="sell">Sell</option>
@@ -224,11 +218,10 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
               </div>
 
               <div>
-                <label className="text-xs text-gray-600 block mb-1">Type</label>
+                <label>Type</label>
                 <select
                   value={leg.optionType}
                   onChange={e => handleLegChange(idx, 'optionType', e.target.value)}
-                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
                 >
                   <option value="call">Call</option>
                   <option value="put">Put</option>
@@ -236,75 +229,59 @@ export function CreateTradeForm({ onSuccess, onCancel }: CreateTradeFormProps) {
               </div>
 
               <div>
-                <label className="text-xs text-gray-600 block mb-1">Strike</label>
+                <label>Strike</label>
                 <input
                   type="number"
                   step="0.01"
                   value={leg.strike}
-                  onChange={e => handleLegChange(idx, 'strike', parseFloat(e.target.value))}
-                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                  onChange={e => handleLegChange(idx, 'strike', toNumber(e.target.value, parseFloat))}
                 />
               </div>
 
               <div>
-                <label className="text-xs text-gray-600 block mb-1">Quantity</label>
+                <label>Quantity</label>
                 <input
                   type="number"
                   value={leg.quantity}
-                  onChange={e => handleLegChange(idx, 'quantity', parseInt(e.target.value))}
-                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                  onChange={e => handleLegChange(idx, 'quantity', toNumber(e.target.value, parseInt))}
                 />
               </div>
 
               <div>
-                <label className="text-xs text-gray-600 block mb-1">Expiration</label>
+                <label>Expiration</label>
                 <input
                   type="date"
                   required
                   value={leg.expirationDate}
                   onChange={e => handleLegChange(idx, 'expirationDate', e.target.value)}
-                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
                 />
               </div>
 
               <div>
-                <label className="text-xs text-gray-600 block mb-1">Entry Price</label>
+                <label>Entry Price</label>
                 <input
                   type="number"
                   step="0.01"
                   required
                   value={leg.entryPrice}
-                  onChange={e => handleLegChange(idx, 'entryPrice', parseFloat(e.target.value))}
-                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                  onChange={e => handleLegChange(idx, 'entryPrice', toNumber(e.target.value, parseFloat))}
                 />
               </div>
             </div>
           </div>
         ))}
 
-        <button
-          type="button"
-          onClick={addLeg}
-          className="text-blue-600 hover:text-blue-700 text-sm font-medium"
-        >
+        <button type="button" onClick={addLeg} className="link-button">
           + Add Leg
         </button>
       </div>
 
       {/* Action Buttons */}
-      <div className="flex gap-2 pt-4">
-        <button
-          type="submit"
-          disabled={loading}
-          className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 transition"
-        >
+      <div className="form-actions">
+        <button type="submit" disabled={loading} className="button-primary">
           {loading ? 'Creating...' : 'Create Trade'}
         </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-400 transition"
-        >
+        <button type="button" onClick={onCancel} className="button-secondary">
           Cancel
         </button>
       </div>

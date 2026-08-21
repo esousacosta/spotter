@@ -386,6 +386,20 @@ export async function updateTrade(
 }
 
 /**
+ * Delete a trade (and its legs, via cascade) with ownership check
+ */
+export async function deleteTrade(tradeId: string, userId: string): Promise<void> {
+  const trade = await getTradeById(tradeId, userId);
+  if (!trade) {
+    throw new Error("Trade not found");
+  }
+
+  await db
+    .delete(tradeJournalEntries)
+    .where(and(eq(tradeJournalEntries.id, tradeId), eq(tradeJournalEntries.userId, userId)));
+}
+
+/**
  * Compute analytics over closed trades for a user
  */
 export async function getTradeAnalytics(userId: string): Promise<TradeAnalytics> {

@@ -1,5 +1,5 @@
 import { auth } from "@/auth";
-import { getTradeById, listTrades, updateTrade } from "@/lib/server/trade-journal-service";
+import { deleteTrade, getTradeById, listTrades, updateTrade } from "@/lib/server/trade-journal-service";
 import { z } from "zod";
 
 export async function GET(
@@ -60,6 +60,29 @@ export async function PATCH(
       return Response.json({ error: error.message }, { status: 400 });
     }
     console.error("Error updating trade:", error);
+    return Response.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { id } = await params;
+
+    await deleteTrade(id, session.user.id);
+    return Response.json({ success: true });
+  } catch (error: any) {
+    if (error?.message?.includes("Trade not found")) {
+      return Response.json({ error: "Trade not found" }, { status: 404 });
+    }
+    console.error("Error deleting trade:", error);
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -25,47 +25,43 @@ export function TradeAnalytics() {
     loadAnalytics();
   }, []);
 
-  if (loading || !analytics) {
-    return null;
+  if (loading) {
+    return <p className="muted">Loading analytics…</p>;
+  }
+
+  if (!analytics) {
+    return <p className="muted">No analytics available yet.</p>;
   }
 
   return (
-    <div className="grid grid-cols-4 gap-4">
-      <div className="bg-white rounded-lg shadow p-6">
-        <p className="text-gray-600 text-sm font-medium mb-2">Total Net PnL</p>
-        <p className={`text-3xl font-bold ${analytics.totalNetPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-          ${analytics.totalNetPnl.toFixed(2)}
-        </p>
-      </div>
+    <div className="summary-grid">
+      <article className={analytics.totalNetPnl >= 0 ? 'summary-positive' : 'summary-negative'}>
+        <span>Total Net PnL</span>
+        <strong>${analytics.totalNetPnl.toFixed(2)}</strong>
+      </article>
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <p className="text-gray-600 text-sm font-medium mb-2">Win Rate</p>
-        <p className="text-3xl font-bold text-blue-600">
-          {(analytics.winRate * 100).toFixed(1)}%
-        </p>
-        <p className="text-xs text-gray-500 mt-1">
+      <article>
+        <span>Win Rate</span>
+        <strong>{(analytics.winRate * 100).toFixed(1)}%</strong>
+        <small>
           {analytics.winCount} wins / {analytics.closedTradeCount} trades
-        </p>
-      </div>
+        </small>
+      </article>
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <p className="text-gray-600 text-sm font-medium mb-2">Profit Factor</p>
-        <p className="text-3xl font-bold text-purple-600">
-          {analytics.profitFactor.toFixed(2)}
-        </p>
-      </div>
+      <article>
+        <span>Profit Factor</span>
+        <strong>{analytics.profitFactor.toFixed(2)}</strong>
+      </article>
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <p className="text-gray-600 text-sm font-medium mb-2">Average Win / Loss</p>
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-green-600">
-            W: ${analytics.averageWin.toFixed(2)}
-          </p>
-          <p className="text-sm font-semibold text-red-600">
-            L: $({Math.abs(analytics.averageLoss).toFixed(2)})
-          </p>
-        </div>
-      </div>
+      <article>
+        <span>Average Win / Loss</span>
+        <strong className="value-positive" style={{ fontSize: '1rem' }}>
+          W: ${analytics.averageWin.toFixed(2)}
+        </strong>
+        <small className="value-negative">
+          L: (${Math.abs(analytics.averageLoss).toFixed(2)})
+        </small>
+      </article>
     </div>
   );
 }

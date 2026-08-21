@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { TradeList } from './components/trade-list';
 import { CreateTradeForm } from './components/create-trade-form';
+import { CloseTradeForm } from './components/close-trade-form';
 import { TradeAnalytics } from './components/trade-analytics';
 import type { TradeWithLegs } from '@/lib/server/trade-journal-service';
 
@@ -14,6 +15,8 @@ export default function TradeJournalPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showCloseForm, setShowCloseForm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const loadTrades = async () => {
     setLoading(true);
@@ -42,6 +45,8 @@ export default function TradeJournalPage() {
   };
 
   const handleTradeSelected = async (tradeId: string) => {
+    setShowCreateForm(false);
+    setShowCloseForm(false);
     try {
       const res = await fetch(`/api/trade-journal/${tradeId}`);
       if (!res.ok) throw new Error('Failed to load trade');
@@ -52,198 +57,236 @@ export default function TradeJournalPage() {
     }
   };
 
-  const handleTradeClosed = async (tradeId: string, updatedTrade: TradeWithLegs) => {
-    setTrades(trades.map(t => t.id === tradeId ? updatedTrade : t));
+  const handleTradeClosed = (tradeId: string, updatedTrade: TradeWithLegs) => {
+    setTrades(trades.map(t => (t.id === tradeId ? updatedTrade : t)));
     setSelectedTrade(updatedTrade);
+    setShowCloseForm(false);
+  };
+
+  const handleDeleteTrade = async (tradeId: string) => {
+    if (!confirm('Delete this trade? This cannot be undone.')) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/trade-journal/${tradeId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete trade');
+      setTrades(trades.filter(t => t.id !== tradeId));
+      setSelectedTrade(null);
+      setShowCloseForm(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete trade');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-8 flex justify-between items-start">
+    <main className="app-shell">
+      <header className="app-header">
+        <div className="brand">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Trade Journal</h1>
-            <p className="text-gray-600 mt-2">Track and analyze your trading performance</p>
+            <p className="eyebrow">Options research workspace</p>
+            <h1>Trade Journal</h1>
+            <p className="header-description">Track and analyze your trading performance</p>
           </div>
-          <Link
-            href="/"
-            className="px-4 py-2 bg-gray-600 text-white rounded-lg font-semibold hover:bg-gray-700 transition"
-          >
+        </div>
+        <div className="header-actions">
+          <Link className="button-secondary" href="/">
             ← Back to Spotter
           </Link>
         </div>
+      </header>
 
-        {/* Error Alert */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800">
-            {error}
+      {error && <p className="error">{error}</p>}
+
+      <div className="workspace">
+        <section className="panel">
+          <div className="section-header">
+            <p className="eyebrow">Performance</p>
+            <h2>Analytics</h2>
           </div>
-        )}
-
-        {/* Analytics Section */}
-        <div className="mb-8">
           <TradeAnalytics />
-        </div>
+        </section>
 
-        <div className="grid grid-cols-3 gap-6">
+        <div className="trade-journal-layout">
           {/* Main Content */}
-          <div className="col-span-2">
-            {/* Filter Tabs */}
-            <div className="mb-6 flex gap-4">
-              <button
-                onClick={() => setFilter('all')}
-                className={`px-4 py-2 rounded-lg font-medium transition ${
-                  filter === 'all'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                All Trades
-              </button>
-              <button
-                onClick={() => setFilter('open')}
-                className={`px-4 py-2 rounded-lg font-medium transition ${
-                  filter === 'open'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                Open
-              </button>
-              <button
-                onClick={() => setFilter('closed')}
-                className={`px-4 py-2 rounded-lg font-medium transition ${
-                  filter === 'closed'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
-              >
-                Closed
-              </button>
+          <section className="panel">
+            <div className="section-header--action">
+            <div>
+              <p className="eyebrow">History</p>
+              <h2>Trades</h2>
+            </div>
             </div>
 
-            {/* Trades List */}
-            <div className="bg-white rounded-lg shadow">
-              {loading ? (
-                <div className="p-8 text-center text-gray-500">Loading trades...</div>
-              ) : trades.length === 0 ? (
-                <div className="p-8 text-center text-gray-500">
-                  No trades found. Create your first trade to get started!
-                </div>
-              ) : (
-                <TradeList
-                  trades={trades}
-                  selectedTradeId={selectedTrade?.id}
-                  onSelectTrade={handleTradeSelected}
-                />
-              )}
+            <div className="filter-tabs">
+            <button
+              onClick={() => setFilter('all')}
+              className={`filter-tab ${filter === 'all' ? 'filter-tab--active' : ''}`}
+            >
+              All Trades
+            </button>
+            <button
+              onClick={() => setFilter('open')}
+              className={`filter-tab ${filter === 'open' ? 'filter-tab--active' : ''}`}
+            >
+              Open
+            </button>
+            <button
+              onClick={() => setFilter('closed')}
+              className={`filter-tab ${filter === 'closed' ? 'filter-tab--active' : ''}`}
+            >
+              Closed
+            </button>
             </div>
-          </div>
+
+            {loading ? (
+            <p className="notice notice--loading">Loading trades...</p>
+            ) : trades.length === 0 ? (
+            <div className="empty-state">
+              <strong>No trades found</strong>
+              <span>Create your first trade to get started!</span>
+            </div>
+            ) : (
+            <div className="trade-list">
+              <TradeList
+                trades={trades}
+                selectedTradeId={selectedTrade?.id}
+                onSelectTrade={handleTradeSelected}
+              />
+            </div>
+            )}
+          </section>
 
           {/* Sidebar */}
-          <div className="space-y-6">
+          <div style={{ display: 'grid', gap: '1rem' }}>
             {/* Create Trade Button */}
-            {!showCreateForm && !selectedTrade && (
-              <button
-                onClick={() => setShowCreateForm(true)}
-                className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
-              >
-                + New Trade
-              </button>
+            {!showCreateForm && (
+            <button
+              onClick={() => {
+                setSelectedTrade(null);
+                setShowCloseForm(false);
+                setShowCreateForm(true);
+              }}
+              className="button-primary"
+              style={{ width: '100%' }}
+            >
+              + New Trade
+            </button>
             )}
 
             {/* Create Trade Form */}
             {showCreateForm && (
-              <div className="bg-white rounded-lg shadow p-6">
-                <h2 className="text-lg font-semibold mb-4">Create Trade</h2>
-                <CreateTradeForm
-                  onSuccess={handleTradeCreated}
-                  onCancel={() => setShowCreateForm(false)}
-                />
+            <section className="panel">
+              <div className="section-header">
+                <h2>Create Trade</h2>
               </div>
+              <CreateTradeForm
+                onSuccess={handleTradeCreated}
+                onCancel={() => setShowCreateForm(false)}
+              />
+            </section>
             )}
 
             {/* Trade Detail */}
             {selectedTrade && (
-              <div className="bg-white rounded-lg shadow p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-lg font-semibold">Trade Details</h2>
-                  <button
-                    onClick={() => setSelectedTrade(null)}
-                    className="text-gray-500 hover:text-gray-700"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="space-y-3 text-sm">
-                  <div>
-                    <p className="text-gray-600">Symbol</p>
-                    <p className="font-semibold">{selectedTrade.symbol}</p>
+            <section className="panel">
+              <div className="section-header--action">
+                <h2>Trade Details</h2>
+                <button
+                  onClick={() => {
+                    setSelectedTrade(null);
+                    setShowCloseForm(false);
+                  }}
+                  className="icon-button"
+                  aria-label="Close trade details"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {showCloseForm ? (
+                <CloseTradeForm
+                  trade={selectedTrade}
+                  onSuccess={updatedTrade => handleTradeClosed(selectedTrade.id, updatedTrade)}
+                  onCancel={() => setShowCloseForm(false)}
+                />
+              ) : (
+                <div className="trade-detail-list">
+                  <div className="trade-detail-field">
+                    <span>Symbol</span>
+                    <strong>{selectedTrade.symbol}</strong>
                   </div>
-                  <div>
-                    <p className="text-gray-600">Strategy</p>
-                    <p className="font-semibold">{selectedTrade.strategy}</p>
+                  <div className="trade-detail-field">
+                    <span>Strategy</span>
+                    <strong>{selectedTrade.strategy}</strong>
                   </div>
-                  <div>
-                    <p className="text-gray-600">Status</p>
-                    <p className={`font-semibold ${
-                      selectedTrade.status === 'open' ? 'text-green-600' : 'text-gray-600'
-                    }`}>
+                  <div className="trade-detail-field">
+                    <span>Status</span>
+                    <strong className={selectedTrade.status === 'open' ? 'value-positive' : ''}>
                       {selectedTrade.status.charAt(0).toUpperCase() + selectedTrade.status.slice(1)}
-                    </p>
+                    </strong>
                   </div>
-                  <div>
-                    <p className="text-gray-600">Quantity</p>
-                    <p className="font-semibold">{selectedTrade.quantity} contracts</p>
+                  <div className="trade-detail-field">
+                    <span>Quantity</span>
+                    <strong>{selectedTrade.quantity} contracts</strong>
                   </div>
-                  <div>
-                    <p className="text-gray-600">Entry Debit</p>
-                    <p className="font-semibold">${selectedTrade.entryNetDebit.toFixed(2)}</p>
+                  <div className="trade-detail-field">
+                    <span>Entry Debit</span>
+                    <strong>${selectedTrade.entryNetDebit.toFixed(2)}</strong>
                   </div>
 
                   {selectedTrade.status === 'closed' && (
                     <>
-                      <hr className="my-3" />
-                      <div>
-                        <p className="text-gray-600">Exit Credit</p>
-                        <p className="font-semibold">${(selectedTrade.exitNetCredit || 0).toFixed(2)}</p>
+                      <hr className="trade-detail-divider" />
+                      <div className="trade-detail-field">
+                        <span>Exit Credit</span>
+                        <strong>${(selectedTrade.exitNetCredit || 0).toFixed(2)}</strong>
                       </div>
-                      <div>
-                        <p className="text-gray-600">Gross PnL</p>
-                        <p className={`font-semibold ${(selectedTrade.grossPnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      <div className="trade-detail-field">
+                        <span>Gross PnL</span>
+                        <strong className={(selectedTrade.grossPnl || 0) >= 0 ? 'value-positive' : 'value-negative'}>
                           ${(selectedTrade.grossPnl || 0).toFixed(2)}
-                        </p>
+                        </strong>
                       </div>
-                      <div>
-                        <p className="text-gray-600">Net PnL</p>
-                        <p className={`font-semibold text-lg ${(selectedTrade.netPnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      <div className="trade-detail-field">
+                        <span>Net PnL</span>
+                        <strong
+                          className={`trade-detail-emphasis ${(selectedTrade.netPnl || 0) >= 0 ? 'value-positive' : 'value-negative'}`}
+                        >
                           ${(selectedTrade.netPnl || 0).toFixed(2)}
-                        </p>
+                        </strong>
                       </div>
-                      <div>
-                        <p className="text-gray-600">Return %</p>
-                        <p className={`font-semibold ${(selectedTrade.returnOnDebit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      <div className="trade-detail-field">
+                        <span>Return %</span>
+                        <strong className={(selectedTrade.returnOnDebit || 0) >= 0 ? 'value-positive' : 'value-negative'}>
                           {((selectedTrade.returnOnDebit || 0) * 100).toFixed(2)}%
-                        </p>
+                        </strong>
                       </div>
                     </>
                   )}
 
-                  {selectedTrade.status === 'open' && (
+                  <div className="form-actions">
+                    {selectedTrade.status === 'open' && (
+                      <button onClick={() => setShowCloseForm(true)} className="button-primary">
+                        Close Trade
+                      </button>
+                    )}
                     <button
-                      onClick={() => setSelectedTrade(null)}
-                      className="w-full mt-4 bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition"
+                      onClick={() => handleDeleteTrade(selectedTrade.id)}
+                      disabled={deleting}
+                      className="button-secondary"
+                      style={{ color: 'var(--red)' }}
                     >
-                      Close Trade
+                      {deleting ? 'Deleting...' : 'Delete Trade'}
                     </button>
-                  )}
+                  </div>
                 </div>
-              </div>
+              )}
+            </section>
             )}
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
