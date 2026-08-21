@@ -253,6 +253,37 @@ export default function TradeJournalPage() {
                     <strong>${selectedTrade.entryNetDebit.toFixed(2)}</strong>
                   </div>
 
+                  {selectedTrade.notes && (
+                    <div className="trade-detail-field">
+                      <span>Notes</span>
+                      <strong>{selectedTrade.notes}</strong>
+                    </div>
+                  )}
+
+                  <hr className="trade-detail-divider" />
+
+                  <div className="trade-detail-field">
+                    <span>Legs</span>
+                    <div className="leg-summary-list">
+                      {selectedTrade.legs.map(leg => (
+                        <div key={leg.id} className="leg-summary-row">
+                          <span className={`leg-summary-side leg-summary-side--${leg.side}`}>
+                            {leg.side} {leg.optionType}
+                          </span>
+                          <div className="leg-summary-details">
+                            <span>Strike <strong>${leg.strike}</strong></span>
+                            <span>Qty <strong>{leg.quantity}</strong></span>
+                            <span>Exp <strong>{leg.expirationDate}</strong></span>
+                            <span>Entry <strong>${leg.entryPrice.toFixed(2)}</strong></span>
+                            {leg.exitPrice != null && (
+                              <span>Exit <strong>${leg.exitPrice.toFixed(2)}</strong></span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   {selectedTrade.status === 'closed' && (
                     <>
                       <hr className="trade-detail-divider" />

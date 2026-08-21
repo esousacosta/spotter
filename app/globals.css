@@ -1676,6 +1676,60 @@ tbody tr:not(.row-drilldown):hover {
   border-top: 1px solid var(--border);
 }
 
+.leg-summary-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.leg-summary-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  padding: 0.65rem 0.85rem;
+}
+
+.leg-summary-side {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.leg-summary-side--buy {
+  border: 1px solid #215d4e;
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.leg-summary-side--sell {
+  border: 1px solid #6d2a2a;
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.leg-summary-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.85rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.leg-summary-details strong {
+  color: var(--text);
+  font-family: var(--font-geist-mono), monospace;
+  font-weight: 600;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
